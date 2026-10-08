@@ -1,14 +1,16 @@
+import { normalizeRecentFilter } from '../lib/chatSidebarPreferences.js'
 import ProjectSessionPage from '../components/ProjectSessionPage'
 import ChatVersionBadge from '../components/ChatVersionBadge'
+import { SidebarPreferenceSubmenu } from '../components/ProjectActionsMenu'
 import React from 'react'
-import { Bot, CheckCheck, ChevronDown, ChevronUp, CircleHelp, Download, Edit3, FolderOpen, FolderPlus, Loader2, MessageSquarePlus, PanelLeftClose, Pin, Plus, RotateCw, Search, Send, Settings, Sparkles, Square, Trash2, X } from 'lucide-react'
+import { Bot, CheckCheck, ChevronDown, ChevronUp, CircleHelp, Copy, Download, Edit3, FolderOpen, FolderPlus, Loader2, MessageSquarePlus, PanelLeftClose, Pin, Plus, RotateCw, Search, Send, Settings, Sparkles, Square, Trash2, X } from 'lucide-react'
 import './chatBody.css'
 
 // Stateless views; ChatApp owns all data, drafts, refs, actions and subscriptions.
-export function ChatSidebar({ layout = 'default', ProjectActionsMenu, batchDeleting, chatInstanceID, chatInstances, chatInstancesLoading, chatReadState, closeProjectDraft, collapsed, conductorsExpanded, createProject, ct, deleteSession, historyExpanded, menuOpen, menuPos, menuRef, newConductorSession, newSession, onOpenSettings, openProjectDraft, openSessionManager, pinnedExpanded, pinnedProjectGroups, pinnedSessions, projectCreating, projectDraftName, projectDraftOpen, projectOrderSaving, projectSessionGroups, projectSortMode, projectsExpanded, recentSessions, regularProjectGroups, renderSidebarProject, renderSidebarTree, sessionManagerOpen, sessions, setCollapsed, setConductorsExpanded, setHistoryExpanded, setPinnedExpanded, setProjectDraftName, setProjectSortMode, setProjectsExpanded, setSessionHubEnabled, setSessionPinned, setShowAllProjects, setSidebarSearch, showAllProjects, sidebarPreferenceMenu, sidebarPreferences, sidebarSearch, sidebarSections, startRename, switchChatInstance }) {
+export function ChatSidebar({ layout = 'default', version, ProjectActionsMenu, batchDeleting, chatInstanceID, chatInstances, chatInstancesLoading, chatReadState, closeProjectDraft, collapsed, conductorsExpanded, copySessionId, createProject, ct, deleteSession, historyExpanded, menuOpen, menuPos, menuRef, newConductorSession, newSession, onOpenSettings, openProjectDraft, openSessionManager, pinnedExpanded, pinnedProjectGroups, pinnedSessions, projectCreating, projectDraftName, projectDraftOpen, projectSessionGroups, projectsExpanded, recentSessions, regularProjectGroups, renderSidebarProject, renderSidebarTree, sessionManagerOpen, sessions, setCollapsed, setConductorsExpanded, setHistoryExpanded, setPinnedExpanded, setProjectDraftName, setProjectsExpanded, setSessionHubEnabled, setSessionPinned, setShowAllProjects, setSidebarSearch, showAllProjects, sidebarPreferenceMenu, sidebarPreferences, updateSidebarPreference, sidebarSearch, sidebarSections, startRename, switchChatInstance }) {
   return (<aside data-ui-surface="chat.sidebar" data-ui-layout={layout} className={`oa-sidebar ${collapsed ? 'collapsed' : ''}`}>
       <div className="oa-side-head">
-        <div className="oa-sidebar-brand">GenericAgent <span>Admin</span><ChatVersionBadge/></div>
+        <div className="oa-sidebar-brand">GenericAgent <span>Admin</span><ChatVersionBadge version={version}/></div>
         <button
           className="oa-new-chat"
           onClick={newSession}
@@ -75,11 +77,7 @@ export function ChatSidebar({ layout = 'default', ProjectActionsMenu, batchDelet
           <div className="oa-sidebar-view-actions">
             <ProjectActionsMenu label={ct('项目更多', 'More project options')}>
               {sidebarPreferenceMenu}
-            <button className="oa-session-manage-open" type="button" aria-pressed={projectSortMode} aria-label={ct('项目排序', 'Sort projects')}
-              onClick={()=>setProjectSortMode(current => !current)} disabled={batchDeleting || projectOrderSaving || (!projectSortMode && projectSessionGroups.length < 2)}
-              title={ct('开启后长按项目手柄拖动，顺序自动保存', 'Enable, then hold a project handle to drag. Order saves automatically.')}>
-              {projectSortMode ? ct('完成项目排序', 'Finish sorting projects') : ct('项目排序', 'Sort projects')}
-            </button>
+
             </ProjectActionsMenu>
             <button className="oa-session-manage-open" type="button" onClick={()=>{ setProjectsExpanded(true); openProjectDraft() }} disabled={projectCreating || projectDraftOpen} title={ct("\u65b0\u5efa\u9879\u76ee", "New project")} aria-label={ct("\u65b0\u5efa\u9879\u76ee", "New project")}>
               <Plus size={16}/>
@@ -102,8 +100,8 @@ export function ChatSidebar({ layout = 'default', ProjectActionsMenu, batchDelet
           <button type="button" onClick={closeProjectDraft} disabled={projectCreating}>{ct('取消', 'Cancel')}</button>
         </form>}
         <div className="oa-session-list oa-project-list">
-        {(showAllProjects || sidebarSearch || projectSortMode ? regularProjectGroups : regularProjectGroups.slice(0, 5)).map(renderSidebarProject)}
-        {!sidebarSearch && !projectSortMode && regularProjectGroups.length > 5 && <button type="button" className="oa-project-show-more" aria-expanded={showAllProjects} onClick={()=>setShowAllProjects(value => !value)}><span aria-hidden="true" style={{ display: 'inline-flex', transform: showAllProjects ? 'rotate(180deg)' : undefined }}><ChevronDown size={12}/></span>{showAllProjects ? ct('收起更多项目', 'Show fewer projects') : ct(`展开其余 ${regularProjectGroups.length - 5} 个项目`, `Show ${regularProjectGroups.length - 5} more projects`)}</button>}
+        {(showAllProjects || sidebarSearch ? regularProjectGroups : regularProjectGroups.slice(0, 5)).map(renderSidebarProject)}
+        {!sidebarSearch && regularProjectGroups.length > 5 && <button type="button" className="oa-project-show-more" aria-expanded={showAllProjects} onClick={()=>setShowAllProjects(value => !value)}><span aria-hidden="true" style={{ display: 'inline-flex', transform: showAllProjects ? 'rotate(180deg)' : undefined }}><ChevronDown size={12}/></span>{showAllProjects ? ct('收起更多项目', 'Show fewer projects') : ct('展开更多项目', 'Show more projects')}</button>}
         {!regularProjectGroups.length && <div className="oa-empty-list oa-projects-empty">
           <FolderOpen size={20}/>
           <span>{sidebarSearch ? ct('无匹配项目', 'No matching projects') : ct('暂无可用项目', 'No projects available')}</span>
@@ -129,6 +127,12 @@ export function ChatSidebar({ layout = 'default', ProjectActionsMenu, batchDelet
               aria-label={ct('一键已读', 'Mark all as read')}
             ><CheckCheck size={16}/></button>
             <ProjectActionsMenu label={ct('最近更多', 'More recent options')}>
+              <SidebarPreferenceSubmenu multiple label={ct('最近显示', 'Show recent')} value={normalizeRecentFilter(sidebarPreferences.recentFilter)}
+                options={[
+                  { value: 'chat', label: ct('普通对话', 'Regular chats') },
+                  { value: 'project', label: ct('项目对话', 'Project chats') },
+                  { value: 'conductor', label: ct('指挥家对话', 'Conductor chats') },
+                ]} onChange={value=>updateSidebarPreference('recentFilter', current => { const selected = normalizeRecentFilter(current); return selected.includes(value) ? selected.filter(key => key !== value) : [...selected, value] })}/>
               {sidebarPreferenceMenu}
               <button type="button" onClick={openSessionManager} disabled={!sessions.length}>{ct('管理会话', 'Manage sessions')}</button>
             </ProjectActionsMenu>
@@ -137,8 +141,8 @@ export function ChatSidebar({ layout = 'default', ProjectActionsMenu, batchDelet
           </div>
           <div id="oa-sidebar-history-body" hidden={!historyExpanded}>
         <div className="oa-session-list">
-          <ProjectSessionPage key={`${chatInstanceID}:${sidebarSearch}`} items={recentSessions} renderItem={renderSidebarTree} ct={ct} expandLabel={remaining => ct(`展开其余 ${remaining} 个...`, `Expand ${remaining} more...`)}/>
-          {!recentSessions.length && <div className="oa-empty-list">{sidebarSearch ? ct('无匹配会话', 'No matching sessions') : ct('暂无历史会话', 'No session history')}</div>}
+          <ProjectSessionPage key={`${chatInstanceID}:${sidebarSearch}:${sidebarPreferences.recentFilter}`} items={recentSessions} renderItem={renderSidebarTree} ct={ct} expandLabel={remaining => ct(`展开其余 ${remaining} 个...`, `Expand ${remaining} more...`)}/>
+          {!recentSessions.length && <div className="oa-empty-list">{sidebarSearch || normalizeRecentFilter(sidebarPreferences.recentFilter).length !== 3 ? ct('无匹配会话', 'No matching sessions') : ct('暂无历史会话', 'No session history')}</div>}
         </div>
           </div>
         </section>
@@ -147,6 +151,7 @@ export function ChatSidebar({ layout = 'default', ProjectActionsMenu, batchDelet
         const s = sessions.find(x => x.id === menuOpen)
         if (!s) return null
         return <div ref={menuRef} className="oa-session-menu" style={{ top: menuPos.top, left: menuPos.left }} onClick={e=>e.stopPropagation()}>
+          <button onClick={()=>copySessionId(s.id)}><Copy size={14}/>{ct('复制会话ID', 'Copy session ID')}</button>
           <button onClick={()=>startRename(s)}><Edit3 size={14}/>{ct('重命名', 'Rename')}</button>
           <button onClick={()=>setSessionPinned(s)}><Pin size={14}/>{s.pinned ? ct('\u53d6\u6d88\u7f6e\u9876', 'Unpin') : ct('\u7f6e\u9876', 'Pin')}</button>
           <button onClick={()=>setSessionHubEnabled(s)}><Bot size={14}/>{s.hub_enabled ? ct('退出 Hub', 'Leave Hub') : ct('入驻 Hub', 'Join Hub')}</button>

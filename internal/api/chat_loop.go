@@ -948,7 +948,7 @@ func (s *Server) processQueuedMessage(sid, queueID string) bool {
 
 	s.SessionMu.Lock()
 	cs, err := loadChatSession(s.CfgStore.Snapshot(), sid)
-	if err != nil || len(cs.QueuedMessages) == 0 || !s.conductorChatRunnable(cs, "user") {
+	if err != nil || len(cs.QueuedMessages) == 0 || !s.conductorChatRunnable(cs, "user") || (queueID == "" && conductorParentQueuePaused(cs)) {
 		s.SessionMu.Unlock()
 		s.endChatRunOwned(sid, token)
 		return false
@@ -992,7 +992,7 @@ func (s *Server) processQueuedMessage(sid, queueID string) bool {
 	// the lock was released to publish the token identity.
 	s.SessionMu.Lock()
 	cs, err = loadChatSession(s.CfgStore.Snapshot(), sid)
-	if err != nil {
+	if err != nil || (queueID == "" && conductorParentQueuePaused(cs)) {
 		s.SessionMu.Unlock()
 		s.endChatRunOwned(sid, token)
 		return false
@@ -1044,11 +1044,6 @@ func (s *Server) processQueuedMessage(sid, queueID string) bool {
 	}
 	// Internal completion evidence wakes the model, but is not a user turn.
 	internalCompletion := queuedItem.Kind == "conductor_completion"
-	if internalCompletion && cs.Loop.Enabled {
-		cs.Loop.Epoch++
-		cs.Loop.Status = chatLoopStatusRunning
-		cs.Loop.StopReason = ""
-	}
 	workerHistory := append([]chatMessage(nil), cs.Messages...)
 	if !internalCompletion {
 		cs.Messages = append(cs.Messages, queuedUserMsg)
@@ -1094,6 +1089,38 @@ func (s *Server) processQueuedMessage(sid, queueID string) bool {
 	// without them a guided queue run only appears after the final session reload.
 	s.SessionMu.Unlock()
 	owned, saveErr := s.saveChatRunPending(sid, token, pendingID, runStartedAtMS, func() error {
+		latest, err := loadChatSession(s.CfgStore.Snapshot(), sid)
+		if err != nil {
+			return err
+		}
+		if queueID == "" && conductorParentQueuePaused(latest) {
+			return errors.New("Conductor parent is paused")
+		}
+		resumeForCompletion := conductorParentPaused(latest) && !conductorParentQueuePaused(latest)
+		// Preserve late completions, removing only the admitted batch.
+		preserveLatestChatUserMetadata(&cs, latest)
+		if internalCompletion && cs.Loop.Enabled {
+			cs.Loop.Epoch++
+			cs.Loop.Status = chatLoopStatusRunning
+			cs.Loop.StopReason = ""
+		}
+		remaining := make([]chatQueuedMessage, 0, len(cs.QueuedMessages))
+		for _, item := range cs.QueuedMessages {
+			consumed := false
+			for _, admitted := range batch {
+				if item.ID == admitted.ID {
+					consumed = true
+					break
+				}
+			}
+			if !consumed {
+				remaining = append(remaining, item)
+			}
+		}
+		cs.QueuedMessages = remaining
+		if queueID != "" || resumeForCompletion {
+			resumeConductorParent(&cs)
+		}
 		return saveChatSessionLocked(s.CfgStore.Snapshot(), cs)
 	})
 	if !owned || saveErr != nil {

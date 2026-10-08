@@ -1357,6 +1357,9 @@ func (s *Server) chatPostWithSender(w http.ResponseWriter, r *http.Request, sid 
 	}
 	updateChatTitle(&cs)
 	owned, saveErr := s.saveChatRunPending(sid, token, pendingMsg.ID, runStartedAtMS, func() error {
+		if senderKind == "user" {
+			return s.saveConductorUserAdmissionLocked(&cs, strings.TrimSpace(req.SourceUserMessageID) != "")
+		}
 		if strings.TrimSpace(req.SourceUserMessageID) != "" {
 			return s.saveChatSessionExactLocked(cs)
 		}
@@ -1463,11 +1466,27 @@ func (s *Server) cancelChatRun(sid string) (bool, error) {
 }
 
 func (s *Server) chatCancel(w http.ResponseWriter, r *http.Request, sid string) {
+	// Pause parent wakeups before stopping its run. Delegated work and its
+	// durable completion inbox belong to the session, not the parent's run.
+	s.SessionMu.Lock()
+	parent, pauseErr := s.setConductorParentPausedLocked(sid, true)
+	s.SessionMu.Unlock()
+	if pauseErr != nil {
+		bad(w, http.StatusInternalServerError, fmt.Sprintf("failed to pause Conductor: %v", pauseErr))
+		return
+	}
 	running, err := s.cancelChatRun(sid)
-	s.cancelConductorSession(sid)
+	if !parent {
+		s.cancelConductorSession(sid)
+	}
 	if err != nil {
 		bad(w, http.StatusInternalServerError, fmt.Sprintf("chat canceled but failed to persist partial output: %v", err))
 		return
+	}
+	if parent {
+		// Retry receipts that arrived while cancellation still owned the run.
+		// Keep this out of cancelChatRun: guide reserves a specific queue item.
+		go s.processPendingConductorCompletions(sid)
 	}
 	writeJSON(w, map[string]interface{}{"ok": true, "running": running && s.chatRunActive(sid)})
 }

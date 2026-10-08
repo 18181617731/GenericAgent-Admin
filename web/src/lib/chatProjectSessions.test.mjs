@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { filterRecentNodes, excludeProjectSessions, groupProjectSessions, isProjectSession, moveProjectOrder, projectSessionKeys } from './chatProjectSessions.js'
+import { projectSessionLabel, projectSidebarGroups, runningProjectKeys, filterRecentNodes, excludeProjectSessions, groupProjectSessions, isProjectSession, moveProjectOrder, projectSessionKeys } from './chatProjectSessions.js'
 
 test('qualified ordering isolates names and supports legacy official order', () => {
   const projects = [
@@ -144,4 +144,93 @@ test('filterRecentNodes drops project sessions only while the project sections a
 test('filterRecentNodes tolerates malformed input', () => {
   assert.deepEqual(filterRecentNodes(null, null, true), [])
   assert.deepEqual(filterRecentNodes([{ session: null }], [], true).length, 1)
+})
+
+
+test('projects follow their newest session update, ahead of manual order', () => {
+  const sessions = [
+    { id: 'old', project_mode: 'A', updated_at: '2026-09-20T10:00:00Z' },
+    { id: 'middle', project_mode: 'B', updated_at: '2026-09-25T10:00:00Z' },
+    { id: 'new', project_mode: 'A', updated_at: '2026-09-27T10:00:00Z' },
+    { id: 'invalid', project_mode: 'Invalid', updated_at: 'bad-date' },
+  ]
+  const projects = ['Empty', 'B', 'A', 'Invalid']
+  const names = input => groupProjectSessions(projects, input, [], ['B', 'A']).map(g => g.name)
+  assert.deepEqual(names(sessions), ['A', 'B', 'Empty', 'Invalid'])
+  assert.deepEqual(names([...sessions, { project_mode: 'B', updated_at: '2026-09-28T10:00:00Z' }]), ['B', 'A', 'Empty', 'Invalid'])
+  assert.equal(sessions[0].id, 'old')
+})
+
+test('project activity sorting preserves pins and orders both groups by recency', () => {
+  const sessions = ['A', 'B', 'C', 'D'].map((name, i) => ({ project_mode: name, updated_at: `2026-09-${20 + i}T10:00:00Z` }))
+  assert.deepEqual(groupProjectSessions(['A', 'B', 'C', 'D'], sessions, ['A', 'B']).map(g => g.name), ['B', 'A', 'D', 'C'])
+})
+
+test('project activity supports ISO, seconds and milliseconds without mutating inputs', () => {
+  const projects = ['Invalid', 'ISO', 'Seconds', 'Millis', 'Empty']
+  const sessions = [
+    { project_mode: 'Invalid', updated_at: 'invalid' },
+    { project_mode: 'ISO', updated_at: '2026-09-20T10:00:00Z' },
+    { project_mode: 'Seconds', updated_at: String(Date.parse('2026-09-21T10:00:00Z') / 1000) },
+    { project_mode: 'Millis', updated_at: Date.parse('2026-09-22T10:00:00Z') },
+  ]
+  const before = JSON.stringify({ projects, sessions })
+  assert.deepEqual(groupProjectSessions(projects, sessions).map(g => g.name), ['Millis', 'Seconds', 'ISO', 'Invalid', 'Empty'])
+  assert.equal(JSON.stringify({ projects, sessions }), before)
+})
+
+test('running projects include all active sessions, deduplicate and respect project IDs', () => {
+  const sessions = [
+    { id: '1', project_id: 'admin-a', project_mode: 'Same name', running: true },
+    { id: '2', project_mode: 'Legacy', running: true },
+    { id: '3', project_id: 'admin-a', running: true },
+    { id: '4', project_id: 'Idle', running: false },
+    { id: '5', running: true },
+    { id: '6', project_id: 'Waiting', running: true },
+    { id: '7', project_id: 'Conductor', running: true, mode: 'conductor' },
+    null,
+  ]
+  assert.deepEqual([...runningProjectKeys(sessions, new Set(['6']))], ['admin-a', 'Legacy', 'Conductor'])
+  assert.deepEqual([...runningProjectKeys(null)], [])
+  assert.deepEqual([...runningProjectKeys(sessions.map(s => s && ({ ...s, running: false })))], [])
+})
+
+test('project labels resolve ID-only, legacy, unknown and ordinary sessions', () => {
+  const projects = [{id:'p',name:'Alpha'}, {key:'q',name:'Beta'}]
+  assert.equal(projectSessionLabel({project_id:'p'},projects),'Alpha')
+  assert.equal(projectSessionLabel({project_id:'q'},projects),'Beta')
+  assert.equal(projectSessionLabel({project_id:'p',project_name:'Explicit'},projects),'Explicit')
+  assert.equal(projectSessionLabel({project_mode:'Legacy'},['Legacy']),'Legacy')
+  assert.equal(projectSessionLabel({project_id:'missing'},projects),'missing')
+  assert.equal(projectSessionLabel({},projects),'')
+  assert.equal(projectSessionLabel(null,null),'')
+})
+
+
+test('project sidebar includes conductor parents, folds workers and keeps flat management data', () => {
+  const parent = { id: 'p', title: 'Leader', project_id: 'a', conductor: { role: 'parent' } }
+  const worker = { id: 'w', title: 'Research', project_id: 'a', conductor: { role: 'worker', parent_session_id: 'p' } }
+  const ordinary = { id: 'o', title: 'Chat', project_id: 'a' }
+  const groups = groupProjectSessions([{ id: 'a', name: 'Alpha', provider: 'admin' }, { id: 'b', name: 'Empty', provider: 'official' }], [worker, parent, ordinary], ['a'])
+  const before = JSON.stringify(groups)
+  const result = projectSidebarGroups(groups)
+  assert.equal(result[0].pinned, true)
+  assert.deepEqual(result[0].sessions, [worker, parent, ordinary])
+  assert.deepEqual(result[0].sessionTrees, [{ session: parent, workers: [worker] }, { session: ordinary, workers: [] }])
+  assert.deepEqual(result[1].sessionTrees, [])
+  assert.equal(JSON.stringify(groups), before)
+  assert.deepEqual(projectSidebarGroups(groups, ' RESEARCH ')[0].sessionTrees, [{ session: parent, workers: [worker] }])
+  assert.equal(projectSidebarGroups(groups, 'leader')[0].sessionTrees[0].session.id, 'p')
+  assert.deepEqual(projectSidebarGroups(groups, 'alpha')[0].sessionTrees, [])
+  assert.deepEqual(projectSidebarGroups(groups, 'missing'), [])
+})
+
+test('project sidebar retains standalone workers and does not fold across project boundaries', () => {
+  const parent = { id: 'p', project_mode: 'Alpha', conductor: { role: 'parent' } }
+  const worker = { id: 'w', project_mode: 'Beta', conductor: { role: 'worker', parent_session_id: 'p' } }
+  const orphan = { id: 'orphan', project_mode: 'Beta', conductor: { role: 'worker', parent_session_id: 'deleted' } }
+  const groups = projectSidebarGroups(groupProjectSessions(['Alpha', 'Beta'], [parent, worker, orphan]))
+  assert.deepEqual(groups[0].sessionTrees, [{ session: parent, workers: [] }])
+  assert.deepEqual(groups[1].sessionTrees.map(node => node.session.id), ['w', 'orphan'])
+  assert.deepEqual(projectSidebarGroups(null), [])
 })

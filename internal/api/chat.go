@@ -639,12 +639,16 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 			}
 			continue
 		}
-		if ev["type"] == "conductor_defaults" || ev["type"] == "conductor_models" {
+		if ev["type"] == "conductor_defaults" || ev["type"] == "conductor_models" || ev["type"] == "conductor_model_strategy" {
 			s.handleConductorSettingsEvent(sid, ev)
 			continue
 		}
 		if ev["type"] == "conductor_dispatch" {
 			s.handleConductorDispatchEvent(sid, ev)
+			continue
+		}
+		if ev["type"] == "conductor_resolve" {
+			s.handleConductorResolveEvent(sid, ev)
 			continue
 		}
 		if ev["type"] == "conductor_review" {
@@ -1741,6 +1745,7 @@ print(json.dumps(items, ensure_ascii=False))`
 }
 
 type chatProviderModel struct {
+	providerOrder   int
 	provider        string
 	model           string
 	displayName     string
@@ -1754,7 +1759,11 @@ type chatProviderModel struct {
 func annotateChatLLMProviders(llms []map[string]interface{}, profiles []modelconfig.Profile) {
 	configured := make([]chatProviderModel, 0)
 	sequence := 0
-	for _, profile := range profiles {
+	for profileIndex, profile := range profiles {
+		providerOrder := profileIndex
+		if profile.ProviderSortOrder != nil {
+			providerOrder = *profile.ProviderSortOrder
+		}
 		provider := chatProviderDisplayName(profile)
 		configs := profile.ModelConfigs
 		if len(configs) == 0 {
@@ -1776,6 +1785,7 @@ func annotateChatLLMProviders(llms []map[string]interface{}, profiles []modelcon
 				order = *config.SortOrder
 			}
 			configured = append(configured, chatProviderModel{
+				providerOrder:   providerOrder,
 				provider:        provider,
 				model:           model,
 				displayName:     strings.TrimSpace(config.Name),
@@ -1865,6 +1875,7 @@ func annotateChatLLMFailoverGroups(llms []map[string]interface{}, groups []model
 
 func applyChatProviderModel(item map[string]interface{}, configured chatProviderModel) {
 	item["provider"] = configured.provider
+	item["provider_sort_order"] = configured.providerOrder
 	if configured.reasoningEffort != "" {
 		item["reasoning_effort"] = configured.reasoningEffort
 	}

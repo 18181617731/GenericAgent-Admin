@@ -76,14 +76,27 @@
 .oa-chat .oa-sidebar .oa-recent-group-head { min-height: 22px; padding: 6px 10px 3px; font-size: 10px; font-weight: 400; color: var(--muted); opacity: .7; }
 .oa-chat .oa-sidebar .oa-recent-group-head small { display: none; }
 .oa-chat .oa-sidebar .oa-session-row .oa-session { min-height: 34px; padding-top: 7px; padding-bottom: 7px; padding-left: 10px; gap: 4px; }
-/* Keep relative ages in one stable trailing column, independent of title length. */
+/* Reserve trailing space only while the absolute action button is visible. */
+.oa-chat .oa-sidebar .oa-session-row .oa-session,
+.oa-chat .oa-sidebar .oa-session-row.is-running .oa-session { padding-right: 10px !important; }
+.oa-chat .oa-sidebar .oa-session-row:hover .oa-session,
+.oa-chat .oa-sidebar .oa-session-row.active .oa-session,
+.oa-chat .oa-sidebar .oa-session-row:focus-within .oa-session,
+.oa-chat .oa-sidebar .oa-session-row:has(.oa-session-more.is-open) .oa-session { padding-right: 40px !important; }
+@media (max-width: 920px), (hover: none) {
+  .oa-chat .oa-sidebar .oa-session-row .oa-session,
+  .oa-chat .oa-sidebar .oa-session-row.is-running .oa-session { padding-right: 40px !important; }
+}
+/* Only the 28px running indicator remains here; ages live in the tooltip. */
 .oa-chat .oa-sidebar .oa-session > small {
-  flex: 0 0 56px;
-  width: 56px;
+  flex: 0 0 28px;
+  width: 28px;
   text-align: right;
   font-variant-numeric: tabular-nums;
 }
-.oa-chat .oa-sidebar .oa-session-title b { flex: 1 1 0%; font-size: 13px; font-weight: 400; line-height: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; mask-image: none; }
+/* Keep titles readable when optional metadata no longer fits on one line. */
+.oa-chat .oa-sidebar .oa-session .oa-session-title { flex-wrap: wrap; row-gap: 3px; }
+.oa-chat .oa-sidebar .oa-session-title b { flex: 1 1 8ch; min-width: min(8ch, 100%); font-size: 13px; font-weight: 400; line-height: 20px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; mask-image: none; }
 .oa-chat .oa-sidebar .oa-project-head { background: transparent; border: 0; box-shadow: none; }
 .oa-chat .oa-sidebar .oa-project-toggle b { font-size: 13px; font-weight: 450; }
 .oa-chat .oa-sidebar .oa-project-toggle small { font-weight: 400; opacity: .55; }
@@ -146,8 +159,8 @@
   .oa-chat .oa-sidebar .oa-project-head:hover > .oa-project-add,
   .oa-chat .oa-sidebar .oa-project-head:focus-within > .oa-project-add { opacity: 1; }
 }
-/* Quiet metadata badge; same treatment for static and expandable conductors. */
-.oa-chat .oa-sidebar .oa-session-conductor-badge {
+/* Match project metadata styling; arrows distinguish expandable conductors. */
+.oa-chat .oa-sidebar .oa-session-title .oa-session-conductor-badge {
   display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto;
   width: auto; min-width: 0; height: 18px; min-height: 18px; padding: 0 5px;
   border: 0; border-radius: 4px; box-shadow: none;
@@ -155,11 +168,17 @@
   font-family: inherit; font-size: 10px; font-weight: 400; line-height: 18px;
   letter-spacing: 0; white-space: nowrap;
 }
-.oa-chat .oa-sidebar .oa-conductor-badge-toggle { cursor: pointer; }
-.oa-chat .oa-sidebar .oa-conductor-badge-toggle:hover {
+.oa-chat .oa-sidebar .oa-session-title .oa-conductor-badge-toggle {
+  cursor: pointer; gap: 3px;
+}
+.oa-chat .oa-sidebar .oa-session-title .oa-conductor-badge-toggle > svg { flex: 0 0 auto; }
+.oa-chat .oa-sidebar .oa-session-title .oa-conductor-badge-toggle[aria-expanded="true"] {
+  background: var(--oa-side-hover);
+}
+.oa-chat .oa-sidebar .oa-session-title .oa-conductor-badge-toggle:hover {
   background: var(--oa-side-hover); color: var(--text);
 }
-.oa-chat .oa-sidebar .oa-conductor-badge-toggle:focus-visible {
+.oa-chat .oa-sidebar .oa-session-title .oa-conductor-badge-toggle:focus-visible {
   outline: 2px solid var(--muted); outline-offset: 2px;
 }
 /* One quiet indentation level, without file-tree elbows or a second heading. */
@@ -222,4 +241,55 @@
 .oa-chat .oa-sidebar .oa-projects-empty-cta:disabled {
   opacity: .45;
   cursor: not-allowed;
+}
+
+/* Independent recent scope and compact session ownership metadata. */
+.oa-chat .oa-sidebar .oa-recent-filter {
+  display: flex; align-items: center; gap: 8px; margin: 2px 10px 6px;
+  color: var(--muted); font-size: 11px;
+}
+.oa-chat .oa-sidebar .oa-recent-filter select {
+  flex: 1; min-width: 0; max-width: 100%; height: 28px;
+  border: 1px solid color-mix(in srgb, var(--text) 12%, transparent);
+  border-radius: 6px; padding: 2px 6px;
+  background: var(--oa-side-bg, var(--bg)); color: var(--text); font: inherit;
+}
+.oa-chat .oa-sidebar .oa-recent-filter select:focus-visible {
+  outline: 2px solid var(--green); outline-offset: 2px;
+}
+.oa-chat .oa-sidebar .oa-session-title .oa-session-project-badge {
+  display: inline-flex; align-items: center; gap: 3px; flex: 0 1 auto;
+  max-width: 84px; min-width: 0; padding: 0 5px; border-radius: 4px;
+  background: color-mix(in srgb, var(--text) 5%, transparent); color: var(--muted);
+  font-size: 10px; font-weight: 400; line-height: 18px; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.oa-chat .oa-sidebar .oa-session-project-badge svg { flex-shrink: 0; }
+
+/* Separate the conductor's own activity from its workers without count badges. */
+.oa-chat .oa-sidebar .oa-session-row .oa-session:has(.oa-session-activity) { padding-right: 40px !important; }
+.oa-chat .oa-sidebar .oa-session-row .oa-session-activity {
+  display: inline-flex !important; align-items: center; gap: 6px; flex: 0 0 auto;
+  width: auto; max-width: none !important;
+}
+.oa-chat .oa-sidebar .oa-session-row .oa-session-running-label { width: 18px; flex: 0 0 auto; }
+.oa-chat .oa-sidebar .oa-session-row .oa-session-child-running-label { width: 14px; justify-content: center; }
+.oa-chat .oa-sidebar .oa-session-child-running-label > svg {
+  flex-shrink: 0;
+  animation: oa-child-task-breathe 2.4s ease-in-out infinite;
+}
+@keyframes oa-child-task-breathe {
+  0%, 100% { opacity: .55; }
+  50% { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .oa-chat .oa-sidebar .oa-session-child-running-label > svg { animation: none; opacity: .85; }
+}
+
+/* Outdent section labels without moving their content or sticky offsets. */
+.oa-chat .oa-sidebar .oa-sidebar-section-head {
+  box-shadow: inset 0 -1px color-mix(in srgb, var(--text) 8%, transparent);
+}
+.oa-chat .oa-sidebar .oa-sidebar-section-head > .oa-sidebar-section-toggle {
+  padding-inline: 4px;
 }

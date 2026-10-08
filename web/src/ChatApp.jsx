@@ -48,7 +48,7 @@ import { preferredUltraPlanOutputFile, reconcileUltraPlanTasks } from './lib/ult
 import { REASONING_EFFORT_LEVELS, REASONING_EFFORT_OPTIONS, modelReasoningEffort, modelReasoningEffortSetting, normalizeReasoningEffort } from './lib/reasoningEffort'
 import { deleteChatSessions, normalizeSessionIds, runChatSessionBatch } from './lib/chatSessionManagement'
 import { clearChatSessionDrafts, listChatSessionDraftIds, loadChatSessionDraft, mergeChatSessionDraftSessions, saveChatSessionDraft } from './lib/chatSessionDrafts'
-import { filterRecentNodes, groupProjectSessions } from './lib/chatProjectSessions.js'
+import { projectSessionLabel, projectSidebarGroups, groupProjectSessions, runningProjectKeys } from './lib/chatProjectSessions.js'
 import { useRuntimeModelRefresh } from './lib/useRuntimeModelRefresh.js'
 import { hubSessions } from './lib/chatHubSessions.js'
 import { groupRecentSessions, sessionAge } from './lib/chatSessionGroups.js'
@@ -3889,6 +3889,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const [err, setErr] = useState('')
   const [collapsed, setCollapsed] = useState(() => isNarrowChatViewport())
   const [notice, setNotice] = useState('')
+  const [sessionCopyNotice, setSessionCopyNotice] = useState('')
   const [llms, setLlms] = useState([])
   const [chatBackend, setChatBackend] = useState(null)
   const [depsRepairing, setDepsRepairing] = useState(false)
@@ -3923,6 +3924,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const [archiveUndo, setArchiveUndo] = useState(null)
   const [attachments, setAttachments] = useState([])
   const [queuedMessages, setQueuedMessages] = useState([])
+  const [queueCollapsed, setQueueCollapsed] = useState(false)
   const [queueEditingId, setQueueEditingId] = useState('')
   const [queueDraft, setQueueDraft] = useState('')
   const [guidingQueueId, setGuidingQueueId] = useState('')
@@ -4733,6 +4735,10 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       streamCompleted = true
       if (isActiveSession(id)) {
         const list = await loadSessions(id)
+        // The terminal event updates the body, but read receipts also need the
+        // persisted result and content revision from the final page snapshot.
+        await refreshCompletedRun(id, openToken, isCurrent)
+        if (!isCurrent()) return
         const currentSession = list.find(session => session.id === id)
         sessionForNotification = currentSession
         if (shouldPollGeneratedTitle(currentSession)) {
@@ -7272,7 +7278,9 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
             <Sparkles className="oa-queue-guide-icon" size={14} aria-hidden="true"/>
             <span className="oa-queue-guide-copy"><b>待发送</b><small>{isCurrentRunning ? '回复进行中，可接管任意一条立即发送' : '回复结束后将按顺序发送'}</small></span>
             <span className="oa-queue-count" aria-label={`${queuedMessages.length} 条待发送消息`}>{queuedMessages.length} 条</span>
+            <button type="button" className="oa-queue-action oa-queue-toggle" onClick={() => setQueueCollapsed(value => !value)} aria-expanded={!queueCollapsed} aria-controls="oa-queue-list" aria-label={queueCollapsed ? ct('展开待发送队列', 'Expand send queue') : ct('收起待发送队列', 'Collapse send queue')} title={queueCollapsed ? ct('展开待发送队列', 'Expand send queue') : ct('收起待发送队列', 'Collapse send queue')}>{queueCollapsed ? <ChevronRight size={16}/> : <ChevronDown size={16}/>}</button>
           </div>
+          <div id="oa-queue-list" className="oa-queue-list" hidden={queueCollapsed}>
           {queuedMessages.map((q, i) => {
             const isEditingQueue = queueEditingId === q.id
             const isGuidingQueue = guidingQueueId === q.id

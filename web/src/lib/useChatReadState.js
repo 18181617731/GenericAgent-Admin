@@ -16,14 +16,15 @@ export function useChatReadState({ instance, sid, snapshot, messages, sessions, 
     try {
       const response = await api('/api/chat/read', { method: 'POST', body: JSON.stringify({ receipts: selected.map(session => ({ sid: session.id, result: session.result })) }) })
       const accepted = new Set(keys)
+      const confirmed = new Set((response.receipts || []).map(receipt => chatReadKey(instance, receipt.sid, receipt.result)))
       setReadKeys(previous => {
         const next = new Set(previous)
-        for (const receipt of response.receipts || []) {
-          const key = chatReadKey(instance, receipt.sid, receipt.result)
+        for (const key of confirmed) {
           if (accepted.has(key)) next.add(key)
         }
         return next
       })
+      return keys.every(key => confirmed.has(key))
     } catch (error) {
       if (error?.name !== 'AbortError') onError?.(error.message)
     } finally {
@@ -41,10 +42,24 @@ export function useChatReadState({ instance, sid, snapshot, messages, sessions, 
   const key = chatReadKey(instance, sid, result)
   const currentNeedsReceipt = needsReceipt(summary)
   const currentUnread = unread(summary)
+  const receiptRef = useRef({ summary, result })
+  useEffect(() => { receiptRef.current = { summary, result } })
+  const visibleRevision = result?.visible_revision
   useEffect(() => {
     if (!eligible || !currentNeedsReceipt) return undefined
-    const tick = createReadDwell(() => { void markRef.current([summary], true) })
-    const check = () => tick(isChatResultVisible(threadRef.current, result), performance.now())
+    // Equivalent list/snapshot refreshes must not restart the reading dwell.
+    // A failed/unconfirmed receipt must not permanently consume that dwell.
+    let cancelled = false
+    let retryDelay = 1000
+    const attempt = async () => {
+      const confirmed = await markRef.current([receiptRef.current.summary], true)
+      if (!confirmed && !cancelled) {
+        tick = createReadDwell(attempt, retryDelay)
+        retryDelay = Math.min(retryDelay * 2, 30000)
+      }
+    }
+    let tick = createReadDwell(attempt)
+    const check = () => tick(isChatResultVisible(threadRef.current, receiptRef.current.result), performance.now())
     const reset = () => tick(false, performance.now())
     const timer = window.setInterval(check, 100)
     const thread = threadRef.current
@@ -53,12 +68,13 @@ export function useChatReadState({ instance, sid, snapshot, messages, sessions, 
     document.addEventListener('visibilitychange', reset)
     check()
     return () => {
+      cancelled = true
       window.clearInterval(timer)
       thread?.removeEventListener('scroll', check)
       window.removeEventListener('blur', reset)
       document.removeEventListener('visibilitychange', reset)
     }
-  }, [eligible, currentNeedsReceipt, key, result, summary, threadRef])
+  }, [eligible, currentNeedsReceipt, key, visibleRevision, threadRef])
   return {
     unread, currentUnread, hasUnread: sessions.some(unread),
     markSessionRead: sessionID => mark(sessions.filter(session => session.id === sessionID)),

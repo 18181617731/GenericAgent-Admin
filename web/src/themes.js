@@ -68,6 +68,28 @@ export const THEMES = Object.freeze([
       colorBgElevated: '#EAF2E6',
     },
   },
+  {
+    id: 'khaki',
+    colorScheme: 'light',
+    icon: Sunset,
+    label: { zh: '卡其色', en: 'Khaki' },
+    description: { zh: '沙米底色与柔和卡其点缀', en: 'Soft sand with muted khaki accents' },
+    preview: ['#F1EEE5', '#E1DAC8', '#756441'],
+    antdAlgorithm: 'default',
+    antdToken: {
+      colorBgBase: '#F1EEE5',
+      colorTextBase: '#353329',
+      colorBorder: '#D5CCB6',
+      colorPrimary: '#756441',
+      colorSuccess: '#2F7D4F',
+      colorWarning: '#9A6A00',
+      colorError: '#C0392B',
+      colorInfo: '#0F7291',
+      colorBgContainer: '#E1DAC8',
+      colorBgLayout: '#E8E3D5',
+      colorBgElevated: '#FAF8F1',
+    },
+  },
 ])
 
 export const DEFAULT_THEME_ID = 'warm'
@@ -229,15 +251,17 @@ export const hydrateCustomColors = async () => {
   }
 }
 
-export const persistCustomColors = async (input, themeId = DEFAULT_THEME_ID) => {
+export const persistCustomColors = async (input, themeId = DEFAULT_THEME_ID, sizes) => {
   const colors = normalizeCustomColors(input)
   if (typeof window === 'undefined') return colors
   const { api } = await import('./lib/api.js')
-  await api('/api/ui/theme', {
+  const data = await api('/api/ui/theme', {
     method: 'PUT',
     dangerous: true,
-    body: JSON.stringify({ theme: getTheme(themeId).id, custom: colors }),
+    body: JSON.stringify({ theme: getTheme(themeId).id, custom: colors, ...(sizes ? { sizes } : {}) }),
   })
+  if (sizes && !data?.sizes) throw new Error('Server does not support size settings yet')
+  if (sizes) { const { applySizes } = await import('./themeSizes.js'); applySizes(data.sizes) }
   // No local mutation until the server acknowledged the write. Errors propagate.
   paletteRevision += 1
   window.__GA_UI_CUSTOM_COLORS__ = colors

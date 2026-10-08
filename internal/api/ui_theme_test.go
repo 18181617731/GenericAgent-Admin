@@ -199,3 +199,71 @@ func TestUIThemeCustomReloadAndResetIsolated(t *testing.T) {
 		t.Fatal("reset not stable or changed preset")
 	}
 }
+
+func TestUIThemePutPersistsKhaki(t *testing.T) {
+	s := newConfigTestServer(t)
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPut, "/api/ui/theme", bytes.NewReader([]byte(`{"theme":"khaki"}`)))
+	markDangerous(req)
+	s.Routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["theme"] != "khaki" {
+		t.Fatalf("theme=%q want khaki", got["theme"])
+	}
+	if snap := s.CfgStore.Snapshot().UITheme; snap != "khaki" {
+		t.Fatalf("stored ui_theme=%q want khaki", snap)
+	}
+
+	get := httptest.NewRecorder()
+	getReq := httptest.NewRequest(http.MethodGet, "/api/ui/theme", nil)
+	s.Routes().ServeHTTP(get, getReq)
+	if get.Code != http.StatusOK {
+		t.Fatalf("GET status=%d body=%s", get.Code, get.Body.String())
+	}
+	got = map[string]any{}
+	if err := json.Unmarshal(get.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["theme"] != "khaki" {
+		t.Fatalf("GET theme=%q want khaki", got["theme"])
+	}
+}
+
+func TestUIThemeSizesPersistValidateAndPreserve(t *testing.T) {
+	s := newConfigTestServer(t)
+	put := func(body string, want int) {
+		t.Helper()
+		rr := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPut, "/api/ui/theme", strings.NewReader(body))
+		markDangerous(req)
+		s.Routes().ServeHTTP(rr, req)
+		if rr.Code != want {
+			t.Fatalf("%d %s", rr.Code, rr.Body.String())
+		}
+	}
+	put(`{"sizes":{"chatFont":20,"radius":8,"chatWeight":537,"uiWeight":453}}`, 200)
+	if s.CfgStore.Snapshot().UISizes["chatWeight"] != 537 || s.CfgStore.Snapshot().UISizes["uiWeight"] != 453 {
+		t.Fatal("lost weights")
+	}
+	put(`{"sizes":{"chatWeight":901}}`, 400)
+	put(`{"sizes":{"uiWeight":99}}`, 400)
+	put(`{"theme":"dark"}`, 200)
+	if s.CfgStore.Snapshot().UISizes["chatFont"] != 20 {
+		t.Fatal("lost sizes")
+	}
+	put(`{"sizes":{"chatFont":999}}`, 400)
+	put(`{"sizes":{"unknown":1}}`, 400)
+	if s.CfgStore.Snapshot().UISizes["chatFont"] != 20 {
+		t.Fatal("invalid write changed sizes")
+	}
+	put(`{"sizes":{}}`, 200)
+	if len(s.CfgStore.Snapshot().UISizes) != 0 {
+		t.Fatal("reset failed")
+	}
+}

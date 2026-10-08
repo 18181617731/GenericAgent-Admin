@@ -1,3 +1,38 @@
+import { conductorSessionTree } from './chatConductor.js'
+
+// Project membership is established before folding workers under their parent.
+// Keep sessions flat for management; sidebar pagination counts visible tree roots.
+export function projectSidebarGroups(groups, query = '') {
+  const q = String(query || '').trim().toLowerCase()
+  const matches = session => String(session?.title || '').toLowerCase().includes(q)
+  return (Array.isArray(groups) ? groups : []).map(group => ({
+    ...group,
+    sessionTrees: conductorSessionTree(group.sessions).filter(node =>
+      !q || matches(node.session) || node.workers.some(matches)),
+  })).filter(group => !q || group.name.toLowerCase().includes(q) || group.sessionTrees.length > 0)
+}
+
+export function projectSessionLabel(session, projects = []) {
+  const name = String(session?.project_name || '').trim()
+  if (name) return name
+  const id = String(session?.project_id || session?.project_mode || '').trim()
+  if (!id) return ''
+  const project = (Array.isArray(projects) ? projects : []).find(project =>
+    typeof project === 'string' ? project === id : String(project?.id || project?.key || project?.name || '').trim() === id)
+  return String(typeof project === 'string' ? project : project?.name || session?.project_mode || id).trim()
+}
+
+// Read all sessions, independently of sidebar search, pagination or folding.
+export function runningProjectKeys(sessions, waitingSessionIds = new Set()) {
+  const keys = new Set()
+  for (const session of Array.isArray(sessions) ? sessions : []) {
+    if (!session?.running || waitingSessionIds.has(session.id)) continue
+    const key = String(session.project_id || session.project_mode || '').trim()
+    if (key) keys.add(key)
+  }
+  return keys
+}
+
 export function groupProjectSessions(projects, sessions, pinnedProjects, manualOrder = []) {
   const sourceProjects = Array.isArray(projects) ? projects : []
   const sourceSessions = Array.isArray(sessions) ? sessions : []
@@ -27,8 +62,17 @@ export function groupProjectSessions(projects, sessions, pinnedProjects, manualO
     return acc
   }, [])
 
-  // Pinned projects float to the top; everything else keeps the order the server
-  // sent, so the list stays stable as sessions come and go.
+  // Keep pins first, then follow the latest contained session update.
+  // Saved/server order only breaks ties (including projects without activity).
+  const latestUpdate = group => group.sessions.reduce((latest, session) => {
+    const value = session?.updated_at
+    if (value == null || value === '') return latest
+    const number = Number(value)
+    const time = Number.isFinite(number)
+      ? (Math.abs(number) < 1e12 ? number * 1000 : number)
+      : Date.parse(value)
+    return Number.isFinite(time) ? Math.max(latest, time) : latest
+  }, 0)
   const order = new Map((Array.isArray(manualOrder) ? manualOrder : []).map((name, index) => [name, index]))
   const manualRank = group => order.get(group.key || group.name)
     ?? order.get(`official:${group.id || group.name}`)
@@ -36,8 +80,8 @@ export function groupProjectSessions(projects, sessions, pinnedProjects, manualO
     ?? Number.MAX_SAFE_INTEGER
   const rank = (group) => group.pinned ? 0 : 1
   return groups
-    .map((group, index) => ({ group, index }))
-    .sort((a, b) => rank(a.group) - rank(b.group) || manualRank(a.group) - manualRank(b.group) || a.index - b.index)
+    .map((group, index) => ({ group, index, updatedAt: latestUpdate(group) }))
+    .sort((a, b) => rank(a.group) - rank(b.group) || b.updatedAt - a.updatedAt || manualRank(a.group) - manualRank(b.group) || a.index - b.index)
     .map(entry => entry.group)
 }
 

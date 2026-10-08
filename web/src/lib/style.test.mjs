@@ -6,7 +6,52 @@ import { dirname, resolve } from 'node:path'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const css = readFileSync(resolve(here, '../style.css'), 'utf8').replace(/\r\n?/g, '\n')
+const sizeCss = readFileSync(resolve(here, '../theme-sizes.css'), 'utf8').replace(/\r\n?/g, '\n')
 const mainSource = readFileSync(resolve(here, '../themes.js'), 'utf8').replace(/\r\n?/g, '\n')
+
+test('session badges reserve the trailing menu slot including running rows', () => {
+  const sidebarCss = readFileSync(resolve(here, '../chatSidebar.css'), 'utf8')
+  assert.match(sidebarCss, /\.oa-chat \.oa-sidebar \.oa-session-row \.oa-session,\s*\.oa-chat \.oa-sidebar \.oa-session-row\.is-running \.oa-session\s*\{\s*padding-right:\s*40px\s*!important;\s*\}/)
+})
+
+test('sidebar titles retain readable space when metadata wraps', () => {
+  const sidebarCss = readFileSync(resolve(here, '../chatSidebar.css'), 'utf8')
+  const title = sidebarCss.split('.oa-chat .oa-sidebar .oa-session-title b {')[1]?.split('}')[0]
+  assert.match(sidebarCss, /\.oa-chat \.oa-sidebar \.oa-session \.oa-session-title\s*\{[^}]*flex-wrap:\s*wrap;[^}]*row-gap:\s*3px;/)
+  assert.match(title, /flex:\s*1 1 8ch/)
+  assert.match(title, /min-width:\s*min\(8ch, 100%\)/)
+  assert.match(title, /text-overflow:\s*ellipsis/)
+})
+
+test('sidebar metadata badges share typography and quiet toggle styling', () => {
+  const sidebarCss = readFileSync(resolve(here, '../chatSidebar.css'), 'utf8')
+  const body = selector => sidebarCss.split(`${selector} {`)[1]?.split('}')[0]
+  for (const kind of ['project', 'conductor']) {
+    const badge = body(`.oa-chat .oa-sidebar .oa-session-title .oa-session-${kind}-badge`)
+    assert.ok(badge)
+    assert.match(badge, /font-size:\s*10px/)
+    assert.match(badge, /font-weight:\s*400/)
+    assert.match(badge, /line-height:\s*18px/)
+    assert.match(badge, /border-radius:\s*4px/)
+    assert.match(badge, /color:\s*var\(--muted\)/)
+  }
+  const toggle = body('.oa-chat .oa-sidebar .oa-session-title .oa-conductor-badge-toggle')
+  assert.match(toggle, /cursor:\s*pointer/)
+  assert.doesNotMatch(toggle, /(?:border|height|font-weight|color)\s*:/)
+})
+
+test('custom message spacing preserves the user action toolbar clearance', () => {
+  const selector = 'html[style*="--size-"] .oa-chat .oa-message'
+  const common = sizeCss.split(`${selector} {`)[1]?.split('}')[0]
+  const nonUser = sizeCss.split(`${selector}:not(.user) {`)[1]?.split('}')[0]
+  assert.ok(common, 'custom dimensions must retain the shared message rule')
+  assert.match(common, /padding-top:\s*var\(--size-spacing\)/)
+  assert.doesNotMatch(common, /(?:^|;)\s*padding(?:-block(?:-end)?|-bottom)?\s*:/)
+  assert.ok(nonUser, 'bottom spacing overrides must exclude user messages')
+  assert.match(nonUser, /padding-bottom:\s*var\(--size-spacing\)/)
+  assert.match(css, /\.oa-message\.user\s*\{[^}]*padding:\s*11px 0 32px/s)
+  assert.match(css, /@media\s*\(max-width:620px\)\s*\{\s*\.oa-message\.user\s*\{\s*padding-bottom:35px/)
+})
 const chatSource = readFileSync(resolve(here, '../ChatApp.jsx'), 'utf8').replace(/\r\n?/g, '\n')
 
 const ruleBodies = (selector) => {
@@ -433,4 +478,26 @@ test('project badge stays compact, semantic, and readable under title pressure',
   assert.match(label, /overflow\s*:\s*hidden/i)
   assert.match(label, /text-overflow\s*:\s*ellipsis/i)
   assert.match(collapsed, /max-width\s*:\s*min\(180px,50%\)/i)
+})
+
+test('file summary keeps compact vertical spacing and copy targets', () => {
+  const rule = selector => css.split(`${selector}{`)[1]?.split('}')[0]
+  assert.match(rule('.oa-file-summary'), /margin-top:8px;padding:4px 11px;/)
+  assert.match(rule('.oa-file-summary-header'), /margin:0 0 2px;/)
+  assert.match(rule('.oa-file-summary-item'), /min-height:24px;/)
+  assert.match(rule('.oa-file-summary-item'), /padding:1px 0;/)
+  assert.match(rule('.oa-file-summary-item .oa-mini-copy'), /width:22px;height:22px;min-width:22px;min-height:22px;/)
+  assert.match(rule('.oa-file-summary-header.collapsed'), /margin-bottom:0/)
+})
+
+test('reasoning menu uses readable text and solid effort indicators', () => {
+  const rule = selector => css.split(`${selector} {`)[1]?.split('}')[0]
+  const option = rule('.oa-reasoning-options button')
+  assert.match(option, /color: var\(--text\);/)
+  assert.match(option, /font-size: 12px;/)
+  assert.match(option, /font-weight: 500;/)
+  assert.match(option, /line-height: 16px;/)
+  assert.match(rule('.oa-reasoning-hint'), /font-size: 11px;/)
+  assert.match(rule('.oa-model-picker-reasoning .oa-reasoning-options button'), /font-size: 12px;/)
+  assert.match(rule('.oa-reasoning-meter > span'), /background: var\(--muted\);/)
 })

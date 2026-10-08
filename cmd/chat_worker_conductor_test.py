@@ -19,11 +19,33 @@ class ConductorDispatchOptionsTest(unittest.TestCase):
     def call(self, **options):
         return self.env['dispatch'](SimpleNamespace(parent=self.agent), {'objective': 'task', **options}, None)
 
+    def test_objective_length_boundary(self):
+        for value in ('a' * 4097, '\u754c' * 4097):
+            result = self.call(objective=value)
+            self.assertFalse(result['ok'])
+            self.assertFalse(result['worker_created'])
+            self.assertIn('exceeds 4096 characters', result['error'])
+        self.assertEqual(self.events, [])
+        value = '\u754c' * 4095 + '!'
+        self.assertTrue(self.call(objective='  ' + value + '  ')['ok'])
+        self.assertEqual(self.events[0]['objective'], value)
+
     def test_omitted_preserves_absence(self):
         self.assertTrue(self.call()['ok'])
         self.assertNotIn('project_id', self.events[0])
         self.assertNotIn('llm_no', self.events[0])
         self.assertNotIn('reasoning_effort', self.events[0])
+
+    def test_additional_prompt_forwarded_and_validated(self):
+        for prompt in ('', 'Return sources\\nDo not change files', '\U0001f642' * 8192):
+            self.assertTrue(self.call(additional_prompt=prompt)['ok'])
+            self.assertEqual(self.events[-1]['additional_prompt'], prompt)
+        before = len(self.events)
+        for prompt in (None, 3, {}, '\U0001f642' * 8193):
+            self.assertFalse(self.call(additional_prompt=prompt)['ok'])
+        self.assertEqual(len(self.events), before)
+        self.assertTrue(self.call()['ok'])
+        self.assertNotIn('additional_prompt', self.events[-1])
 
     def test_null_inherits_and_allows_reuse(self):
         for options in ({'project_id': None}, {'project_id': None, 'session_id': 'worker'}):
@@ -160,6 +182,50 @@ class ConductorDispatchOptionsTest(unittest.TestCase):
 
 
 class ConductorReviewTest(unittest.TestCase):
+    def test_basis_only_review_and_guidance(self):
+        tree = ast.parse(Path(__file__).with_name('chat_worker.py').read_text(encoding='utf-8'))
+        installer = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == '_install_conductor_tools')
+        node = next(n for n in installer.body if isinstance(n, ast.FunctionDef) and n.name == 'review')
+        agent, events = object(), []
+        env = dict(agent=agent, StepOutcome=lambda data, **kw: SimpleNamespace(data=data, **kw),
+                   uuid=__import__('uuid'), broker=Path('broker'),
+                   emit=events.append, read_reply=lambda *args: {'ok': True})
+        exec(compile(ast.Module(body=[node], type_ignores=[]), '<review>', 'exec'), env)
+        args = dict(dispatch_id='d', status='verified', basis='Reviewed artifact.txt and reported test output',
+                    unverified='Production not exercised')
+        result = env['review'](SimpleNamespace(parent=agent), args, None)
+        self.assertTrue(result.data['ok'])
+        self.assertEqual(events[0]['evidence_ids'], [])
+        for key, value in args.items():
+            self.assertEqual(events[0][key], value)
+        self.assertIn('optional evidence_ids', result.next_prompt)
+        self.assertIn('do not record needs_work solely', result.next_prompt)
+
+    def test_review_schema_and_description(self):
+        tree = ast.parse(Path(__file__).with_name('chat_worker.py').read_text(encoding='utf-8'))
+        installer = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == '_install_conductor_tools')
+        specs = next(n for n in installer.body if isinstance(n, ast.Assign)
+                     and any(isinstance(t, ast.Name) and t.id == 'specs' for t in n.targets))
+        descriptions = {row.elts[0].value: row.elts[2].value for row in specs.value.elts}
+        review = descriptions['conductor_review']
+        for rule in ('basis is required', 'evidence_ids is optional', 'conductor_collect evidence[]',
+                     '<dispatch_id>:<index>', 'result_receipt fields are read acknowledgments',
+                     'not a protocol error', 'state unverified scope'):
+            self.assertIn(rule, review)
+        self.assertNotIn('verified requires evidence_ids', review)
+        self.assertIn('evidence_status=none', descriptions['conductor_collect'])
+        loop = next(n for n in installer.body if isinstance(n, ast.For)
+                    and isinstance(n.target, ast.Tuple)
+                    and [e.id for e in n.target.elts] == ['name', 'method', 'description', 'parameter'])
+        env = dict(specs=[('conductor_review', None, review, 'dispatch_id')],
+                   originals={'do_conductor_review': None}, handler_type=SimpleNamespace(),
+                   displayed=lambda method: method, schema=[])
+        exec(compile(ast.Module(body=[loop], type_ignores=[]), '<review-schema>', 'exec'), env)
+        schema = env['schema'][0]['function']['parameters']
+        self.assertEqual(set(schema['required']), {'dispatch_id', 'status', 'basis'})
+        self.assertIn('evidence_ids', schema['properties'])
+        self.assertNotIn('evidence_ids', schema['required'])
+
     def test_review_and_cancel_receipts_have_continuation(self):
         tree = ast.parse(Path(__file__).with_name('chat_worker.py').read_text(encoding='utf-8'))
         installer = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == '_install_conductor_tools')
@@ -203,6 +269,27 @@ class ConductorReviewTest(unittest.TestCase):
         self.assertEqual(replies, [(Path('broker') / (events[0]['request_id'] + '.response.json'), 30)])
 
 
+class ConductorResolutionTest(unittest.TestCase):
+    def test_resolution_forwards_and_rejects_wrong_parent(self):
+        tree = ast.parse(Path(__file__).with_name('chat_worker.py').read_text(encoding='utf-8'))
+        node = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == 'resolve' and any(isinstance(x, ast.Constant) and x.value == 'conductor_resolve' for x in ast.walk(n)))
+        agent, events, replies = object(), [], []
+        def read_reply(path, timeout):
+            replies.append((path, timeout))
+            return {'ok': True, 'resolved': True}
+        env = dict(agent=agent, StepOutcome=lambda value, **kwargs: value,
+                   uuid=__import__('uuid'), broker=Path('broker'),
+                   emit=events.append, read_reply=read_reply)
+        exec(compile(ast.Module(body=[node], type_ignores=[]), '<resolve>', 'exec'), env)
+        args = dict(dispatch_id='old', status='superseded', basis='Same objective replaced', replacement_dispatch_id='new')
+        self.assertFalse(env['resolve'](SimpleNamespace(parent=object()), args, None)['ok'])
+        self.assertEqual(events, [])
+        self.assertTrue(env['resolve'](SimpleNamespace(parent=agent), args, None)['resolved'])
+        for key, value in args.items():
+            self.assertEqual(events[0][key], value)
+        self.assertEqual(replies, [(Path('broker') / (events[0]['request_id'] + '.response.json'), 30)])
+
+
 class ConductorToolBoundaryTest(unittest.TestCase):
     def test_parent_denies_execution_and_restores_inherited_tools(self):
         import sys
@@ -240,11 +327,22 @@ class ConductorToolBoundaryTest(unittest.TestCase):
             try:
                 self.assertEqual({s['function']['name'] for s in module.TOOLS_SCHEMA},
                                  {'ask_user', 'conductor_dispatch', 'conductor_collect', 'conductor_cancel', 'conductor_review',
-                                  'conductor_tasks', 'conductor_defaults', 'conductor_models'})
+                                  'conductor_tasks', 'conductor_defaults', 'conductor_models', 'conductor_model_strategy', 'conductor_resolve'})
+                strategy_schema = next(s['function']['parameters'] for s in module.TOOLS_SCHEMA if s['function']['name'] == 'conductor_model_strategy')
+                self.assertEqual(strategy_schema['required'], ['action'])
+                self.assertEqual(strategy_schema['properties']['action']['enum'], ['get', 'set', 'reset'])
+                self.assertEqual(strategy_schema['properties']['strategy']['maxLength'], 8192)
+                self.assertFalse(strategy_schema['additionalProperties'])
                 review_schema = next(s['function']['parameters'] for s in module.TOOLS_SCHEMA if s['function']['name'] == 'conductor_review')
-                self.assertEqual(set(review_schema['required']), {'dispatch_id', 'status', 'basis', 'evidence_ids'})
+                self.assertEqual(set(review_schema['required']), {'dispatch_id', 'status', 'basis'})
+                self.assertIn('evidence_ids', review_schema['properties'])
                 self.assertEqual(review_schema['properties']['status']['enum'], ['verified', 'needs_work'])
                 self.assertFalse(review_schema['additionalProperties'])
+                resolve_schema = next(s['function']['parameters'] for s in module.TOOLS_SCHEMA if s['function']['name'] == 'conductor_resolve')
+                self.assertEqual(set(resolve_schema['required']), {'dispatch_id', 'status', 'basis'})
+                self.assertEqual(resolve_schema['properties']['status']['enum'], ['closed', 'superseded'])
+                self.assertIn('replacement_dispatch_id', resolve_schema['properties'])
+                self.assertFalse(resolve_schema['additionalProperties'])
                 handler = Handler()
                 for name, args in [('code_run', {'script': 'python agentmain.py --task task'}), ('file_read', {'path': 'subagent_sop.md'})]:
                     result = getattr(handler, 'do_' + name)(args, None)
@@ -333,6 +431,37 @@ class ConductorCoreContractTest(ConductorDispatchOptionsTest):
         # Receipt data belongs in tool_results, not a second copy in streamed text.
         self.assertNotIn(json.dumps(reply), ''.join(output))
 
+    def test_real_loop_model_strategy_receipts(self):
+        import json
+        tree = ast.parse(Path(__file__).with_name('chat_worker.py').read_text(encoding='utf-8'))
+        installer = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == '_install_conductor_tools')
+        nodes = [n for n in installer.body if isinstance(n, ast.FunctionDef) and n.name in {'settings_tool', 'strategy_tool'}]
+        self.assertEqual(len(nodes), 2)
+        self.env['json'] = json
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), '<strategy-tools>', 'exec'), self.env)
+        for action, reply in [('set', {'ok': True, 'strategy': 'Use model A for lookup; model B for design.'}),
+                              ('get', {'ok': True, 'strategy': 'Saved policy'}),
+                              ('reset', {'ok': True, 'strategy': ''}),
+                              ('set', {'ok': False, 'error': 'invalid strategy'}),
+                              ('get', {'ok': False, 'pending': True, 'error': 'timeout'})]:
+            with self.subTest(action=action, reply=reply):
+                events = []
+                self.env['emit'] = events.append
+                def dispatch(handler, args, response):
+                    outcome = self.env['strategy_tool'](handler, args, response)
+                    if reply.get('ok'):
+                        self.assertIn(json.dumps(reply['strategy']), outcome.next_prompt)
+                        self.assertIn('queued/running workers are unchanged', outcome.next_prompt)
+                    return outcome
+                self.env['dispatch'] = dispatch
+                args = {'action': action, '_index': 0, '_tool_num': 2}
+                if action == 'set':
+                    args['strategy'] = 'User-approved replacement'
+                self.exercise_loop(reply, receipt_args=args)
+                self.assertEqual(len(events), 2)
+                self.assertTrue(all(e['type'] == 'conductor_model_strategy' for e in events))
+                self.assertTrue(all(e['args'] == {k: v for k, v in args.items() if not k.startswith('_')} for e in events))
+
     def test_real_loop_review_cancel_receipts(self):
         tree = ast.parse(Path(__file__).with_name('chat_worker.py').read_text(encoding='utf-8'))
         installer = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == '_install_conductor_tools')
@@ -356,7 +485,8 @@ class ConductorCoreContractTest(ConductorDispatchOptionsTest):
         tree = ast.parse(Path(__file__).with_name('chat_worker.py').read_text(encoding='utf-8'))
         installer = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == '_install_conductor_tools')
         ack = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == '_ack_conductor_result')
-        exec(compile(ast.Module(body=[ack], type_ignores=[]), '<ack>', 'exec'), self.env)
+        page = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == '_conductor_collect_page')
+        exec(compile(ast.Module(body=[ack, page], type_ignores=[]), '<ack>', 'exec'), self.env)
         import tempfile
         directory = tempfile.TemporaryDirectory()
         self.addCleanup(directory.cleanup)

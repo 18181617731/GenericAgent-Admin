@@ -22,7 +22,7 @@ export const unassignedNavItems = () => {
 // Standalone console groups do not change embedded chat settings.
 export const ADMIN_GROUPS = [
   { id: 'general', label: { en: 'Workspace', zh: '工作台' }, items: ['overview'] },
-  { id: 'agent', label: { en: 'Configuration', zh: '配置' }, items: ['settings', 'chat', 'models', 'keychain', 'instances', 'channels'] },
+  { id: 'agent', label: { en: 'Configuration', zh: '配置' }, items: ['settings', 'theme', 'chat', 'models', 'keychain', 'instances', 'channels'] },
   { id: 'automation', label: { en: 'Operations', zh: '运行' }, items: ['tasks', 'goals', 'files'] },
   { id: 'system', label: { en: 'Diagnostics', zh: '诊断' }, items: ['usage', 'logs'] },
 ]

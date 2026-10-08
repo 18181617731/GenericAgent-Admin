@@ -1,6 +1,7 @@
 import ModelDiscoveryList from './ModelDiscoveryList'
 import './models-workbench.css'
 import './models-redesign.css'
+import './models-failover.css'
 import { modelAdvancedView } from './modelsAdvancedView'
 import { modelRiskView } from './modelsRiskView'
 import { UiSurface } from '../ui/UiHost'
