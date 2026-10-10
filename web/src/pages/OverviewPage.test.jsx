@@ -17,6 +17,7 @@ const versionStub = (gitStatus) => ({
   gitBusy: false,
   gitStatus,
   autostart: { supported: true, enabled: false },
+  refreshStatus: vi.fn().mockResolvedValue({ stage: '', running: false }),
   checkVersion: vi.fn(),
   updateVersion: vi.fn(),
   checkSource: vi.fn(),
@@ -40,7 +41,7 @@ const renderOverview = ({ lang = 'zh', gitStatus, observability, services = [], 
 describe('OverviewPage', () => {
   it('does not claim all clear before the first snapshot', () => {
     renderOverview()
-    expect(screen.getByRole('status').textContent).toContain(I18N.zh.overview.awaitingSnapshot)
+    expect(screen.getAllByRole('status').some(node => node.textContent.includes(I18N.zh.overview.awaitingSnapshot))).toBe(true)
     expect(screen.queryByText(I18N.zh.overview.allClear)).toBeNull()
   })
 

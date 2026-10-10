@@ -249,12 +249,12 @@ func TestChatCancelPersistsPartialOutput(t *testing.T) {
 	s.publishChatRun(sid, map[string]interface{}{
 		"type":  "turn_usage",
 		"index": float64(0),
-		"usage": map[string]interface{}{"input_tokens": float64(3000), "output_tokens": float64(80), "cached_tokens": float64(10), "generation_ms": float64(1600)},
+		"usage": map[string]interface{}{"input_tokens": float64(3000), "output_tokens": float64(80), "cached_tokens": float64(10), "generation_ms": float64(1600), "request_elapsed_ms": float64(5000)},
 	})
 	s.publishChatRun(sid, map[string]interface{}{
 		"type":  "turn_usage",
 		"index": float64(1),
-		"usage": map[string]interface{}{"input_tokens": float64(1290), "output_tokens": float64(38), "cached_tokens": float64(7), "generation_ms": float64(900)},
+		"usage": map[string]interface{}{"input_tokens": float64(1290), "output_tokens": float64(38), "cached_tokens": float64(7), "generation_ms": float64(900), "request_elapsed_ms": float64(3000)},
 	})
 	s.publishChatRun(sid, map[string]interface{}{
 		"type":      "ctx_stats",
@@ -292,6 +292,9 @@ func TestChatCancelPersistsPartialOutput(t *testing.T) {
 	}
 	if len(got.Usages) != 2 || got.Usages[0]["input_tokens"] != 3000 || got.Usages[0]["generation_ms"] != 1600 || got.Usages[1]["output_tokens"] != 38 || got.Usages[1]["generation_ms"] != 900 {
 		t.Fatalf("per-turn usages not persisted after cancel: %#v", got.Usages)
+	}
+	if got.Usage["request_elapsed_ms"] != 8000 || len(got.Usages) != 2 || got.Usages[0]["request_elapsed_ms"] != 5000 || got.Usages[1]["request_elapsed_ms"] != 3000 {
+		t.Fatalf("request timing not persisted after cancel: usage=%#v usages=%#v", got.Usage, got.Usages)
 	}
 	if got.CtxChars != 3800 || got.CtxMsgs != 3 {
 		t.Fatalf("context stats not persisted after cancel: (%d,%d) message=%#v", got.CtxChars, got.CtxMsgs, got)
@@ -528,5 +531,168 @@ func TestPublishChatLineDisconnectsOverflowedSubscriberWithoutSkippingCursor(t *
 	s.ChatMu.Unlock()
 	if subscribed {
 		t.Fatal("overflowed subscriber remains registered")
+	}
+}
+
+func TestWorldlineRestorePreservesMessagesConversation(t *testing.T) {
+	s := newChatCommandTestServer(t)
+	const sid = "worldline-restore"
+	seed := chatSession{
+		ID:    sid,
+		Title: "Restore test",
+		Messages: []chatMessage{
+			{ID: "old-u", Role: "user", Content: "old question", CreatedAt: 1},
+			{ID: "old-a", Role: "assistant", Content: "old answer", CreatedAt: 2},
+		},
+		RawHistory: []map[string]interface{}{
+			{"role": "user", "content": "old question"},
+			{"role": "assistant", "content": "old answer"},
+		},
+	}
+	if err := saveChatSession(s.CfgStore.Snapshot(), seed); err != nil {
+		t.Fatal(err)
+	}
+
+	restoredRaw := []map[string]interface{}{
+		{"role": "user", "content": []interface{}{map[string]interface{}{"type": "text", "text": "restored question"}}},
+		{"role": "assistant", "content": "restored answer"},
+	}
+	requests := make(chan map[string]interface{}, 1)
+	oldStart := startChatWorkerFunc
+	startChatWorkerFunc = func(config.AppConfig, string) (*chatWorker, error) {
+		stdinR, stdinW := io.Pipe()
+		stdoutR, stdoutW := io.Pipe()
+		go func() {
+			defer stdinR.Close()
+			defer stdoutW.Close()
+			var req map[string]interface{}
+			if json.NewDecoder(stdinR).Decode(&req) == nil {
+				if active, ok := req["activate"].(bool); !ok || !active {
+					t.Errorf("worldline request activate = %#v, want true", req["activate"])
+				}
+				requests <- req
+			}
+			_ = json.NewEncoder(stdoutW).Encode(map[string]interface{}{
+				"type":         "worldline",
+				"action":       "restore",
+				"tree":         map[string]interface{}{"nodes": []interface{}{}},
+				"result":       map[string]interface{}{"node_id": "node-1", "display_path": seed.Messages},
+				"raw_history":  restoredRaw,
+				"history_info": []interface{}{map[string]interface{}{"restored": true}},
+				"working":      map[string]interface{}{"phase": "restored"},
+			})
+		}()
+		return &chatWorker{SID: sid, Stdin: stdinW, Stdout: stdoutR}, nil
+	}
+	defer func() { startChatWorkerFunc = oldStart }()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/chat/"+sid, strings.NewReader(`{"prompt":"/worldline restore node-1 conversation before"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-GA-Confirm", "dangerous")
+	rr := httptest.NewRecorder()
+	s.Routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"type":"command_result"`) {
+		t.Fatalf("restore status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	workerReq := <-requests
+	if workerReq["action"] != "restore" || workerReq["sid"] != sid || workerReq["node_id"] != "node-1" || workerReq["mode"] != "conversation" || workerReq["to"] != "before" {
+		t.Fatalf("worker request: %#v", workerReq)
+	}
+
+	if history, ok := workerReq["history"].([]interface{}); !ok || len(history) != 2 {
+		t.Fatalf("missing cold-start history: %#v", workerReq)
+	}
+	got, err := loadChatSession(s.CfgStore.Snapshot(), sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Messages) != 2 || got.Messages[0].ID != "old-u" || got.Messages[0].Content != "old question" || got.Messages[1].ID != "old-a" {
+		t.Fatalf("restored messages were not persisted: %#v", got.Messages)
+	}
+	if got.Working["phase"] != "restored" {
+		t.Fatalf("restored state was not persisted: history_info=%#v working=%#v", got.HistoryInfo, got.Working)
+	}
+}
+
+func TestWorldlineRestorePreservesMessagesCode(t *testing.T) {
+	s := newChatCommandTestServer(t)
+	const sid = "worldline-restore"
+	seed := chatSession{
+		ID:    sid,
+		Title: "Restore test",
+		Messages: []chatMessage{
+			{ID: "old-u", Role: "user", Content: "old question", CreatedAt: 1},
+			{ID: "old-a", Role: "assistant", Content: "old answer", CreatedAt: 2},
+		},
+		RawHistory: []map[string]interface{}{
+			{"role": "user", "content": "old question"},
+			{"role": "assistant", "content": "old answer"},
+		},
+	}
+	if err := saveChatSession(s.CfgStore.Snapshot(), seed); err != nil {
+		t.Fatal(err)
+	}
+
+	restoredRaw := []map[string]interface{}{
+		{"role": "user", "content": []interface{}{map[string]interface{}{"type": "text", "text": "restored question"}}},
+		{"role": "assistant", "content": "restored answer"},
+	}
+	requests := make(chan map[string]interface{}, 1)
+	oldStart := startChatWorkerFunc
+	startChatWorkerFunc = func(config.AppConfig, string) (*chatWorker, error) {
+		stdinR, stdinW := io.Pipe()
+		stdoutR, stdoutW := io.Pipe()
+		go func() {
+			defer stdinR.Close()
+			defer stdoutW.Close()
+			var req map[string]interface{}
+			if json.NewDecoder(stdinR).Decode(&req) == nil {
+				if active, ok := req["activate"].(bool); !ok || !active {
+					t.Errorf("worldline request activate = %#v, want true", req["activate"])
+				}
+				requests <- req
+			}
+			_ = json.NewEncoder(stdoutW).Encode(map[string]interface{}{
+				"type":         "worldline",
+				"action":       "restore",
+				"tree":         map[string]interface{}{"nodes": []interface{}{}},
+				"result":       map[string]interface{}{"node_id": "node-1", "display_path": seed.Messages},
+				"raw_history":  restoredRaw,
+				"history_info": []interface{}{map[string]interface{}{"restored": true}},
+				"working":      map[string]interface{}{"phase": "restored"},
+			})
+		}()
+		return &chatWorker{SID: sid, Stdin: stdinW, Stdout: stdoutR}, nil
+	}
+	defer func() { startChatWorkerFunc = oldStart }()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/chat/"+sid, strings.NewReader(`{"prompt":"/worldline restore node-1 code before"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-GA-Confirm", "dangerous")
+	rr := httptest.NewRecorder()
+	s.Routes().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"type":"command_result"`) {
+		t.Fatalf("restore status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	workerReq := <-requests
+	if workerReq["action"] != "restore" || workerReq["sid"] != sid || workerReq["node_id"] != "node-1" || workerReq["mode"] != "code" || workerReq["to"] != "before" {
+		t.Fatalf("worker request: %#v", workerReq)
+	}
+
+	if history, ok := workerReq["history"].([]interface{}); !ok || len(history) != 2 {
+		t.Fatalf("missing cold-start history: %#v", workerReq)
+	}
+	got, err := loadChatSession(s.CfgStore.Snapshot(), sid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Messages) != 2 || got.Messages[0].ID != "old-u" || got.Messages[0].Content != "old question" || got.Messages[1].ID != "old-a" {
+		t.Fatalf("restored messages were not persisted: %#v", got.Messages)
+	}
+	if len(got.RawHistory) != 2 || got.RawHistory[0]["content"] != "old question" || len(got.HistoryInfo) != 0 {
+		t.Fatalf("code restore changed conversation: %#v", got)
+	}
+	if got.Working["phase"] != "restored" {
+		t.Fatalf("restored state was not persisted: history_info=%#v working=%#v", got.HistoryInfo, got.Working)
 	}
 }

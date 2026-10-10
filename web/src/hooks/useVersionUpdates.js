@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../lib/api'
 import { confirmDanger } from '../lib/danger'
+import { updateOperationLocked, updateText, versionUpdateView } from '../lib/versionUpdateView'
 import {
   VERSION_RELOAD_DELAY_MS,
   VERSION_RELOAD_RETRY_MS,
@@ -18,6 +19,11 @@ export function useVersionUpdates({ t, lang, setMsg, setBusy, active = true }) {
   const [check, setCheck] = useState(null)
   const [status, setStatus] = useState(null)
   const [busy, setVersionBusy] = useState(false)
+  const [checking, setChecking] = useState(false)
+  const [checkError, setCheckError] = useState('')
+  const [statusError, setStatusError] = useState('')
+  const [actionError, setActionError] = useState('')
+  const actionPending = useRef(false)
   const [gitBusy, setGitBusy] = useState(false)
   const [gitStatus, setGitStatus] = useState(null)
   const [autostart, setAutostart] = useState(null)
@@ -36,11 +42,19 @@ export function useVersionUpdates({ t, lang, setMsg, setBusy, active = true }) {
   // Loaded alongside the workspace boot sequence so the shell can render the
   // version card without a second round trip. The local git status comes along
   // because it decides whether the GA source card applies at all.
+  const loadUpdateSnapshot = async () => {
+    const results = await Promise.allSettled([
+      api('/api/version/info'),
+      refreshStatus(),
+    ])
+    if (results[0].status === 'fulfilled') setInfo(results[0].value)
+  }
+
   const loadSnapshot = async () => {
     const [auto, ver, stat, git] = await Promise.all([
       api('/api/autostart/status').catch(e => ({ supported:false, enabled:false, error:e.message })),
       api('/api/version/info').catch(e => ({ error:e.message })),
-      api('/api/version/status').catch(() => null),
+      refreshStatus().catch(() => null),
       api('/api/ga/git-status').catch(() => ({ available: false, reason: 'unreachable' })),
     ])
     setAutostart(auto)
@@ -50,12 +64,18 @@ export function useVersionUpdates({ t, lang, setMsg, setBusy, active = true }) {
     return { autostart: auto, info: ver, status: stat, gitStatus: git }
   }
 
+  const latestReleaseTag = check?.latest?.tag_name || ''
   useEffect(() => {
     if (!active) return undefined
     let stopped = false
+    let inFlight = false
+    let reloadTimer
     const tick = async () => {
+      if (stopped || inFlight) return
+      inFlight = true
       try {
         const d = await refreshStatus()
+        if (stopped) return
         if (needsReload.current && shouldReloadAfterVersionUpdate(d, observedRunning.current)) {
           if (versionMatchesExpectedRelease(info?.version, check?.latest?.tag_name || '')) {
             setTimeout(() => window.location.reload(), VERSION_RELOAD_DELAY_MS)
@@ -64,8 +84,10 @@ export function useVersionUpdates({ t, lang, setMsg, setBusy, active = true }) {
         }
         if (!stopped && d?.running) setTimeout(tick, VERSION_RELOAD_RETRY_MS)
       } catch (err) {
+        if (stopped) return
         if (shouldReportVersionPollError(restartGraceUntil.current)) console.error('Version status poll error:', err)
-        if (!stopped) setTimeout(tick, VERSION_RELOAD_RETRY_MS)
+      } finally {
+        inFlight = false
       }
     }
     tick()
@@ -80,18 +102,26 @@ export function useVersionUpdates({ t, lang, setMsg, setBusy, active = true }) {
     return () => clearInterval(timer)
   }, [status?.running, active])
 
+  const currentView = () => versionUpdateView({ info, check, status, busy, checking, checkError, statusError }, lang)
   const checkVersion = async () => {
-    setVersionBusy(true)
+    if (actionPending.current || !currentView().canCheck) return
+    actionPending.current = true
+    setChecking(true)
+    setCheckError('')
+    setActionError('')
     try {
       const d = await api('/api/version/check')
       setCheck(d)
       setMsg(d.update ? t.overview.versionFound(d.latest?.tag_name || '') : t.overview.versionCurrent)
-    } catch (e) { setMsg(e.message) } finally { setVersionBusy(false) }
+    } catch (e) { setCheckError(e.message); setMsg(e.message) }
+    finally { actionPending.current = false; setChecking(false) }
   }
 
   const updateVersion = async () => {
-    if (!await confirmDanger('version-update', t.overview.versionUpdateConfirm)) return
+    if (actionPending.current || !currentView().canPrepare) return
+    actionPending.current = true
     setVersionBusy(true)
+    setActionError('')
     try {
       restartGraceUntil.current = beginVersionRestartGrace()
       needsReload.current = true
@@ -101,8 +131,9 @@ export function useVersionUpdates({ t, lang, setMsg, setBusy, active = true }) {
     } catch (e) {
       restartGraceUntil.current = 0
       needsReload.current = false
+      setActionError(e.message)
       setMsg(e.message)
-    } finally { setVersionBusy(false) }
+    } finally { actionPending.current = false; setVersionBusy(false) }
   }
 
   const checkSource = async () => {

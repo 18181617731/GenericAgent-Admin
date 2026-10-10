@@ -64,7 +64,9 @@
 .oa-chat .oa-sidebar .oa-sidebar-section-head { display: flex; align-items: center; gap: 8px; min-height: 32px; padding: 0; position: sticky; top: 0; z-index: 4; background: color-mix(in srgb, var(--surface-muted) 96%, var(--surface-strong)); }
 .oa-chat .oa-sidebar .oa-sidebar-section-toggle { width: auto; flex: 1; min-width: 0; height: 32px; gap: 6px; padding: 0 10px; border-radius: 4px; font-size: 13px; font-weight: 450; background: transparent; }
 .oa-chat .oa-sidebar .oa-sidebar-section-toggle:hover { background: transparent; color: var(--text); }
-.oa-chat .oa-sidebar .oa-sidebar-section-toggle > span { order: 1; opacity: .65; }
+.oa-chat .oa-sidebar .oa-sidebar-section-toggle > span { order: 1; opacity: 0; }
+.oa-chat .oa-sidebar .oa-sidebar-section-head:hover .oa-sidebar-section-toggle > span,
+.oa-chat .oa-sidebar .oa-sidebar-section-head:focus-within .oa-sidebar-section-toggle > span { opacity: .65; }
 .oa-chat .oa-sidebar .oa-sidebar-section-toggle > span::before { width: 4px; height: 4px; }
 .oa-chat .oa-sidebar .oa-sidebar-section .oa-sidebar-view-actions { display: flex; align-items: center; flex: 0 0 auto; gap: 2px; margin: 0; }
 .oa-chat .oa-sidebar .oa-sidebar-section .oa-session-manage-open { display: inline-flex; align-items: center; justify-content: center; min-width: 26px; height: 26px; padding: 0 5px; border-radius: 5px; font-weight: 400; }
@@ -286,10 +288,65 @@
   .oa-chat .oa-sidebar .oa-session-child-running-label > svg { animation: none; opacity: .85; }
 }
 
-/* Outdent section labels without moving their content or sticky offsets. */
+/* Quiet section hierarchy: spacing, not separators. */
+.oa-chat .oa-sidebar .oa-sidebar-section-head { box-shadow: none; border-bottom: 0; }
+.oa-chat .oa-sidebar .oa-sidebar-section-head > .oa-sidebar-section-toggle { padding-inline: 8px; font-weight: 500; }
+.oa-chat .oa-sidebar .oa-sidebar-brand { font-size: 14px; font-weight: 600; letter-spacing: -.15px; padding-bottom: 8px; }
+.oa-chat .oa-sidebar .oa-sidebar-section { margin-bottom: 14px; }
+.oa-chat .oa-sidebar .oa-sidebar-section-toggle { font-size: 12px; color: var(--muted); }
+.oa-chat .oa-sidebar .oa-session-title { font-size: 13px; font-weight: 400; line-height: 20px; }
+.oa-chat .oa-sidebar .oa-recent-filter { margin: 0 8px 6px; gap: 6px; }
+.oa-chat .oa-sidebar .oa-recent-filter select { border-color: transparent; background: transparent; height: 26px; color: var(--muted); }
+.oa-chat .oa-sidebar .oa-recent-filter select:hover { background: var(--oa-side-hover); color: var(--text); }
+
+/* Navigation glyphs are secondary to labels, including selected and hovered controls. */
+.oa-chat .oa-sidebar .oa-side-head > button > svg,
+.oa-chat .oa-sidebar .oa-sidebar-tabs button svg,
+.oa-chat .oa-sidebar .oa-sidebar-scroll-tools > .oa-new-conductor > svg,
+.oa-chat .oa-sidebar .oa-project-toggle > svg,
+.oa-chat .oa-sidebar .oa-sidebar-foot button > svg,
+.oa-chat .oa-collapsed-actions > .oa-icon-btn > svg { color: var(--muted); }
+
+/* Compact rows, with quiet headings and stronger content labels. */
+.oa-chat .oa-sidebar {
+  --oa-side-row-height: max(28px, calc(var(--size-controlHeight, 36px) - 4px));
+}
+.oa-chat .oa-sidebar .oa-sidebar-sections { padding-top: 0; }
+.oa-chat .oa-sidebar .oa-sidebar-section { margin-bottom: 8px; }
 .oa-chat .oa-sidebar .oa-sidebar-section-head {
-  box-shadow: inset 0 -1px color-mix(in srgb, var(--text) 8%, transparent);
+  min-height: var(--oa-side-row-height);
+}
+.oa-chat .oa-sidebar .oa-sidebar-section-head .oa-sidebar-view-actions > button,
+.oa-chat .oa-sidebar .oa-project-head > .oa-project-add,
+.oa-chat .oa-sidebar .oa-project-head > .oa-project-reorder {
+  height: var(--oa-side-row-height); min-height: var(--oa-side-row-height);
+  width: var(--oa-side-row-height); min-width: var(--oa-side-row-height);
 }
 .oa-chat .oa-sidebar .oa-sidebar-section-head > .oa-sidebar-section-toggle {
-  padding-inline: 4px;
+  height: var(--oa-side-row-height); min-height: var(--oa-side-row-height);
+  font-size: max(12px, calc(var(--size-uiFont, 14px) - 2px));
+  font-weight: 500; color: var(--muted);
+}
+.oa-chat .oa-sidebar .oa-project-head {
+  top: var(--oa-side-row-height); min-height: var(--oa-side-row-height);
+}
+.oa-chat .oa-sidebar .oa-project-head > .oa-project-toggle {
+  height: auto; min-height: var(--oa-side-row-height); padding-block: 4px;
+  font-size: max(13px, calc(var(--size-uiFont, 14px) - 1px));
+  color: var(--text);
+}
+.oa-chat .oa-sidebar .oa-project-toggle b { font-size: inherit; font-weight: 400; }
+.oa-chat .oa-sidebar .oa-session-row .oa-session {
+  min-height: var(--oa-side-row-height); padding-block: 4px;
+}
+.oa-chat .oa-sidebar .oa-session-title b {
+  font-size: max(13px, calc(var(--size-uiFont, 14px) - 1px)); color: var(--text);
+}
+.oa-chat .oa-sidebar .oa-sidebar-section > .oa-project-list { padding-block: 2px; }
+.oa-chat .oa-sidebar .oa-recent-filter { margin-bottom: 4px; }
+.oa-chat .oa-sidebar .oa-sidebar-tabs button { color: var(--muted); font-weight: 400; }
+.oa-chat .oa-sidebar .oa-sidebar-tabs button.active,
+.oa-chat .oa-sidebar .oa-sidebar-tabs button:hover { color: var(--text); }
+@media (max-width: 920px), (hover: none), (pointer: coarse) {
+  .oa-chat .oa-sidebar { --oa-side-row-height: max(44px, var(--size-controlHeight, 36px)); }
 }

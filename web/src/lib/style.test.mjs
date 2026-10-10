@@ -14,6 +14,74 @@ test('session badges reserve the trailing menu slot including running rows', () 
   assert.match(sidebarCss, /\.oa-chat \.oa-sidebar \.oa-session-row \.oa-session,\s*\.oa-chat \.oa-sidebar \.oa-session-row\.is-running \.oa-session\s*\{\s*padding-right:\s*40px\s*!important;\s*\}/)
 })
 
+test('sidebar navigation icons use theme-muted color without fading labels or status glyphs', () => {
+  const sidebarCss = readFileSync(resolve(here, '../chatSidebar.css'), 'utf8').replace(/\r\n?/g, '\n')
+  const navigationSelectors = [
+    '.oa-chat .oa-sidebar .oa-side-head > button > svg',
+    '.oa-chat .oa-sidebar .oa-sidebar-tabs button svg',
+    '.oa-chat .oa-sidebar .oa-sidebar-scroll-tools > .oa-new-conductor > svg',
+    '.oa-chat .oa-sidebar .oa-project-toggle > svg',
+    '.oa-chat .oa-sidebar .oa-sidebar-foot button > svg',
+    '.oa-chat .oa-collapsed-actions > .oa-icon-btn > svg',
+  ]
+  const selector = navigationSelectors.join(',\n')
+  const rule = sidebarCss.split(`${selector} {`)[1]?.split('}')[0]
+  assert.ok(rule, 'navigation icon overrides must remain scoped to glyphs')
+  assert.match(rule, /color:\s*var\(--muted\)/)
+  assert.doesNotMatch(rule, /opacity:|stroke:|fill:|filter:/)
+  assert.doesNotMatch(selector, /oa-session-(?:status|project-badge|conductor-badge)|danger/)
+})
+
+test('compact sidebar rows respect user dimensions and retain touch targets', () => {
+  const sidebarCss = readFileSync(resolve(here, '../chatSidebar.css'), 'utf8')
+  const compact = sidebarCss.split('/* Compact rows, with quiet headings and stronger content labels. */')[1]
+  assert.ok(compact, 'compact overrides must be local to the chat sidebar')
+  assert.match(compact, /--oa-side-row-height:\s*max\(28px, calc\(var\(--size-controlHeight, 36px\) - 4px\)\)/)
+  assert.match(compact, /\.oa-chat \.oa-sidebar \.oa-sidebar-section\s*\{\s*margin-bottom:\s*8px;/)
+  for (const selector of [
+    '.oa-chat .oa-sidebar .oa-sidebar-section-head > .oa-sidebar-section-toggle',
+    '.oa-chat .oa-sidebar .oa-project-head > .oa-project-toggle',
+    '.oa-chat .oa-sidebar .oa-session-row .oa-session',
+  ]) {
+    const rule = compact.split(`${selector} {`)[1]?.split('}')[0]
+    assert.ok(rule, `missing compact row rule for ${selector}`)
+    assert.match(rule, /min-height:\s*var\(--oa-side-row-height\)/)
+  }
+  assert.match(compact, /\.oa-project-head\s*\{\s*top:\s*var\(--oa-side-row-height\)/)
+  const actions = compact.split('.oa-chat .oa-sidebar .oa-project-head > .oa-project-reorder {')[1]?.split('}')[0]
+  assert.ok(actions, 'sidebar action buttons must not stretch compact heading rows')
+  assert.match(actions, /height:\s*var\(--oa-side-row-height\); min-height:\s*var\(--oa-side-row-height\)/)
+  assert.match(actions, /width:\s*var\(--oa-side-row-height\); min-width:\s*var\(--oa-side-row-height\)/)
+  assert.match(compact, /@media \(max-width:\s*920px\), \(hover:\s*none\), \(pointer:\s*coarse\)/)
+  assert.match(compact, /--oa-side-row-height:\s*max\(44px, var\(--size-controlHeight, 36px\)\)/)
+  assert.doesNotMatch(compact, /!important|display:\s*none|overflow:\s*hidden/)
+})
+
+test('compact sidebar separates muted navigation from readable content', () => {
+  const sidebarCss = readFileSync(resolve(here, '../chatSidebar.css'), 'utf8')
+  const compact = sidebarCss.split('/* Compact rows, with quiet headings and stronger content labels. */')[1]
+  const body = selector => compact.split(`${selector} {`)[1]?.split('}')[0]
+  assert.match(body('.oa-chat .oa-sidebar .oa-sidebar-section-head > .oa-sidebar-section-toggle'), /font-size:\s*max\(12px, calc\(var\(--size-uiFont, 14px\) - 2px\)\)/)
+  assert.match(body('.oa-chat .oa-sidebar .oa-sidebar-section-head > .oa-sidebar-section-toggle'), /color:\s*var\(--muted\)/)
+  assert.match(body('.oa-chat .oa-sidebar .oa-project-head > .oa-project-toggle'), /color:\s*var\(--text\)/)
+  assert.match(body('.oa-chat .oa-sidebar .oa-session-title b'), /color:\s*var\(--text\)/)
+  assert.match(body('.oa-chat .oa-sidebar .oa-sidebar-tabs button'), /color:\s*var\(--muted\)/)
+  assert.match(compact, /\.oa-sidebar-tabs button\.active,\s*\.oa-chat \.oa-sidebar \.oa-sidebar-tabs button:hover\s*\{\s*color:\s*var\(--text\)/)
+  assert.doesNotMatch(compact, /#[\da-fA-F]{3,8}|opacity:|filter:/)
+})
+
+test('sidebar section arrows stay quiet until hover or keyboard focus', () => {
+  const sidebarCss = readFileSync(resolve(here, '../chatSidebar.css'), 'utf8')
+  const selector = '.oa-chat .oa-sidebar .oa-sidebar-section-toggle > span'
+  const arrowRules = sidebarCss.split(`${selector} {`).slice(1).map(rule => rule.split('}')[0])
+  assert.ok(arrowRules.length > 0)
+  assert.match(arrowRules.at(-1), /opacity:\s*0(?:;|\s*$)/)
+  assert.doesNotMatch(arrowRules.join('\n'), /display:\s*none|visibility:\s*hidden/)
+  assert.match(arrowRules.join('\n'), /flex:\s*0 0 12px/)
+  assert.match(sidebarCss, /\.oa-sidebar-section-head:hover \.oa-sidebar-section-toggle > span,\s*\.oa-chat \.oa-sidebar \.oa-sidebar-section-head:focus-within \.oa-sidebar-section-toggle > span\s*\{\s*opacity:\s*\.65;\s*\}/)
+  assert.match(sidebarCss, /\.oa-sidebar-section-toggle\[aria-expanded="true"\] > span::before\s*\{[^}]*transform:/)
+})
+
 test('sidebar titles retain readable space when metadata wraps', () => {
   const sidebarCss = readFileSync(resolve(here, '../chatSidebar.css'), 'utf8')
   const title = sidebarCss.split('.oa-chat .oa-sidebar .oa-session-title b {')[1]?.split('}')[0]
@@ -137,6 +205,20 @@ test('all color themes share one product font stack', () => {
 
   assert.match(mainSource, /fontFamily\s*:\s*['"]var\(--font\)['"]/)
   assert.doesNotMatch(mainSource, /fontFamily\s*:\s*['"]Inter\b/i)
+})
+
+test('light controls use neutral fills and a separate quiet selection surface', () => {
+  const light = ruleBodies('html[data-theme="light"]').join('\n')
+  assert.match(light, /--accent\s*:\s*#373737\s*;/i)
+  assert.match(light, /--accent-hover\s*:\s*#242424\s*;/i)
+  assert.match(light, /--text-on-accent\s*:\s*#ffffff\s*;/i)
+  const tokenCss = readFileSync(resolve(here, '../theme-tokens.css'), 'utf8')
+  const selection = tokenCss.match(/:root\[data-theme="light"\]\s*\{([^}]*)\}/)?.[1] || ''
+  assert.match(selection, /--selected\s*:\s*rgba\(13,\s*13,\s*13,\s*\.08\)\s*;/i)
+  assert.match(selection, /--selected-text\s*:\s*var\(--text\)\s*;/i)
+  assert.match(light, /--focus-ring\s*:\s*rgba\(55,\s*55,\s*55,\s*\.45\)\s*;/i)
+  assert.match(light, /--focus-glow\s*:\s*rgba\(55,\s*55,\s*55,\s*\.12\)\s*;/i)
+  assert.doesNotMatch(light, /#(?:C9A961|A8914F|866C36)|rgba\(201,\s*169,\s*97,/i)
 })
 
 test('chat markdown uses a scale-safe readable type hierarchy', () => {

@@ -1,18 +1,96 @@
 import React from 'react'
-import { cleanup, render, screen } from '@testing-library/react'
-import { afterEach, expect, it, vi } from 'vitest'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { api } from '../lib/api'
 import ChatVersionBadge from './ChatVersionBadge'
 vi.mock('../lib/api', () => ({ api: vi.fn() }))
-afterEach(() => { cleanup(); vi.clearAllMocks() })
-it('shows the running Admin version', async () => {
-  api.mockResolvedValue({ version: 'v1.2.3' })
-  render(<ChatVersionBadge/>)
-  expect(await screen.findByText('v1.2.3')).toBeTruthy()
-  expect(api).toHaveBeenCalledWith('/api/version/info')
+
+afterEach(() => cleanup())
+beforeEach(() => { api.mockReset() })
+
+it('starts closed, shows the real version, and toggles without fetching update state', async () => {
+  api.mockResolvedValue({ version: 'v0.3.21' })
+  render(<ChatVersionBadge><button>Settings</button><select aria-label="GA instance"><option>Default</option></select></ChatVersionBadge>)
+  const toggle = await screen.findByRole('button', { name: 'GenericAgent Admin v0.3.21' })
+  expect(toggle.getAttribute('aria-expanded')).toBe('false')
+  expect(screen.queryByRole('dialog')).toBeNull()
+  expect(screen.queryByRole('button', { name: 'Settings' })).toBeNull()
+  expect(api.mock.calls.map(([path]) => path)).toEqual(['/api/version/info'])
+  fireEvent.click(toggle)
+  expect(toggle.getAttribute('aria-expanded')).toBe('true')
+  expect(screen.getByRole('dialog').parentElement).toBe(document.body)
+  expect(screen.getByRole('button', { name: 'Settings' })).toBeTruthy()
+  expect(screen.getByRole('combobox', { name: 'GA instance' })).toBeTruthy()
+  fireEvent.click(toggle)
+  expect(screen.queryByRole('dialog')).toBeNull()
+  expect(screen.queryByRole('combobox')).toBeNull()
+  expect(screen.queryByRole('dialog')).toBeNull()
+  expect(api.mock.calls.map(([path]) => path)).toEqual(['/api/version/info'])
 })
-it('does not invent a version on failure', async () => {
+
+it('keeps pointer opening free of forced input focus', async () => {
+  const user = userEvent.setup()
+  render(<ChatVersionBadge version="Preview"><select aria-label="GA instance"><option>Default</option></select></ChatVersionBadge>)
+  const toggle = screen.getByRole('button', { name: 'GenericAgent Admin Preview' })
+  await user.click(toggle)
+  expect(screen.getByRole('dialog')).toBeTruthy()
+  expect(document.activeElement).toBe(toggle)
+  await user.tab()
+  expect(document.activeElement).toBe(screen.getByRole('combobox'))
+  await user.keyboard('{Escape}')
+  expect(screen.queryByRole('dialog')).toBeNull()
+  expect(document.activeElement).toBe(toggle)
+})
+
+it('supports keyboard, instance changes, action close, Escape and outside dismiss', async () => {
+  const settings = vi.fn()
+  const switchInstance = vi.fn()
+  const user = userEvent.setup()
+  render(<ChatVersionBadge version="v0.3.21"><select aria-label="GA instance" onChange={event => switchInstance(event.target.value)}><option value="default">Default</option><option value="test">Test</option></select><button onClick={settings}>Settings</button></ChatVersionBadge>)
+  const toggle = screen.getByRole('button', { name: 'GenericAgent Admin v0.3.21' })
+  await user.tab()
+  await user.keyboard('{Enter}')
+  const select = screen.getByRole('combobox')
+  expect(document.activeElement).toBe(select)
+  await user.selectOptions(select, 'test')
+  expect(switchInstance).toHaveBeenCalledWith('test')
+  expect(screen.getByRole('dialog')).toBeTruthy()
+  await user.tab()
+  await user.keyboard('{Enter}')
+  expect(settings).toHaveBeenCalledTimes(1)
+  expect(screen.queryByRole('dialog')).toBeNull()
+  toggle.focus()
+  await user.keyboard(' ')
+  await user.keyboard('{Escape}')
+  expect(screen.queryByRole('dialog')).toBeNull()
+  expect(document.activeElement).toBe(toggle)
+  await user.keyboard(' ')
+  fireEvent.pointerDown(document.body)
+  expect(screen.queryByRole('dialog')).toBeNull()
+  expect(api).not.toHaveBeenCalled()
+})
+
+it('does not fetch for supplied preview versions, and shows a safe fallback when loading fails', async () => {
+  const preview = render(<ChatVersionBadge version="Preview"/>)
+  expect(screen.getByRole('button', { name: 'GenericAgent Admin Preview' })).toBeTruthy()
+  expect(api).not.toHaveBeenCalled()
+  preview.unmount()
   api.mockRejectedValue(new Error('offline'))
   render(<ChatVersionBadge/>)
-  expect(await screen.findByText('?')).toBeTruthy()
+  await waitFor(() => expect(screen.getByRole('button', { name: 'GenericAgent Admin ?' })).toBeTruthy())
+  fireEvent.click(screen.getByRole('button', { name: 'GenericAgent Admin ?' }))
+  expect(screen.getByRole('button', { name: 'GenericAgent Admin ?' }).getAttribute('aria-expanded')).toBe('true')
 })
+
+ it('opens the existing update dialog only from the popover action', async () => {
+  api.mockResolvedValue({ version: 'v0.3.21' })
+  render(<ChatVersionBadge version="v0.3.21"/>)
+  fireEvent.click(screen.getByRole('button', { name: 'GenericAgent Admin v0.3.21' }))
+  expect(api).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: '版本更新' }))
+  await waitFor(() => expect(api.mock.calls.some(([path]) => path === '/api/version/status')).toBe(true))
+  expect(document.querySelector('.oa-sidebar-admin-content')).toBeNull()
+  expect(screen.getByRole('dialog')).toBeTruthy()
+  expect(api.mock.calls.every(([, options]) => !options?.method || options.method === 'GET')).toBe(true)
+ })

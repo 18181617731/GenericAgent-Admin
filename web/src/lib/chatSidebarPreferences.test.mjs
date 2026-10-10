@@ -1,6 +1,12 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { readSidebarPreferences, sortSidebarSessions, sidebarPreferenceDefaults, filterSidebarRecentNodes, normalizeRecentFilter } from './chatSidebarPreferences.js'
+import { readSidebarPreferences, sortSidebarSessions, sidebarPreferenceDefaults, filterSidebarRecentNodes, normalizeRecentFilter, normalizeSidebarLayout, sidebarTabIcons } from './chatSidebarPreferences.js'
+test('module initializes default sidebar layout with icon dependencies ready', () => {
+  assert.ok(sidebarTabIcons.includes('grid'))
+  assert.deepEqual(sidebarPreferenceDefaults.sectionLayout, normalizeSidebarLayout())
+  assert.equal(sidebarPreferenceDefaults.sectionLayout.active, 'home')
+  assert.deepEqual(sidebarPreferenceDefaults.sectionLayout.tabs, [{ id: 'home', name: 'Home' }])
+})
 test('preferences tolerate invalid and unavailable storage', () => {
   for (const raw of ['null', '{}', 'invalid']) assert.deepEqual(readSidebarPreferences({getItem:()=>raw}), {...sidebarPreferenceDefaults,showProjects:true,showConductor:true,sort:'updated'})
   assert.deepEqual(readSidebarPreferences({getItem:()=>'{"layout":"list","sort":"priority"}'}), {...sidebarPreferenceDefaults,showProjects:false,showConductor:true,sort:'priority'})
@@ -66,4 +72,74 @@ test('recent selections accept every subset and persist empty selections', () =>
   assert.deepEqual(normalizeRecentFilter(['project','bad','project']),['project'])
   const both = {session:{project_id:'p',conductor:{role:'parent'}}}
   assert.deepEqual(filterSidebarRecentNodes([both],['project','conductor']),[both])
+})
+
+test('custom section visibility and order survive reload with invalid keys repaired', () => {
+  const prefs = readSidebarPreferences({getItem:()=>JSON.stringify({showPinned:false, showRecent:false, sectionOrder:['recent','recent','invalid','projects']})})
+  assert.equal(prefs.showPinned, false)
+  assert.equal(prefs.showRecent, false)
+  assert.deepEqual(prefs.sectionOrder, ['recent','projects','pinned','conductors'])
+  assert.deepEqual(readSidebarPreferences({getItem:()=>JSON.stringify(prefs)}), prefs)
+})
+
+test('tab ownership and display counts round trip and repair orphaned tabs', () => {
+  const raw = {sectionLayout:{tabs:[{id:'work',name:'Work',hideName:true},{id:'work',name:'Duplicate'}],active:'work',sections:{projects:{tab:'work',count:20},recent:{tab:'missing',count:7}}}}
+  const prefs = readSidebarPreferences({getItem:()=>JSON.stringify(raw)})
+  assert.equal(prefs.sectionLayout.tabs.length,2)
+  assert.equal(prefs.sectionLayout.active,'work')
+  assert.deepEqual(prefs.sectionLayout.sections.projects,{tabs:['work'],count:20})
+  assert.deepEqual(prefs.sectionLayout.sections.recent,{tabs:['home'],count:10})
+  assert.deepEqual(readSidebarPreferences({getItem:()=>JSON.stringify(prefs)}),prefs)
+})
+test('tab icons survive storage reload and normalize unsupported or legacy values safely', () => {
+  const raw = {sectionLayout:{tabs:[{id:'legacy',name:'Legacy'},{id:'work',name:'Work',icon:'briefcase',hideName:false},{id:'unknown',name:'Unknown',icon:'not-an-icon'}],active:'work',sections:{projects:{tab:'work',count:20}}}}
+  const prefs = readSidebarPreferences({getItem:()=>JSON.stringify(raw)})
+  assert.deepEqual(prefs.sectionLayout.tabs.slice(1).map(tab=>tab.icon),['grid','briefcase','grid'])
+  assert.equal(prefs.sectionLayout.showActiveTabName,true)
+  assert.ok(prefs.sectionLayout.tabs.every(tab=>!('hideName' in tab)))
+  assert.deepEqual(prefs.sectionLayout.sections.projects.tabs,['work'])
+  assert.deepEqual(readSidebarPreferences({getItem:()=>JSON.stringify(prefs)}),prefs)
+})
+test('home preferences survive reload without allowing home removal or orphaned sections', () => {
+  const raw = {sectionLayout:{tabs:[{id:'home',name:'Inbox',hideName:false,icon:'message'},{id:'work',name:'Work',hideName:false}],active:'work',sections:{projects:{tab:'work',count:20}}}}
+  const prefs = readSidebarPreferences({getItem:()=>JSON.stringify(raw)})
+  assert.deepEqual(prefs.sectionLayout.tabs[0],{id:'home',name:'Inbox',icon:'message'})
+  assert.deepEqual(readSidebarPreferences({getItem:()=>JSON.stringify(prefs)}),prefs)
+  assert.deepEqual(normalizeSidebarLayout({tabs:[]}).tabs,[{id:'home',name:'Home'}])
+  assert.equal(normalizeSidebarLayout({tabs:[{id:'home',name:'   ',icon:'invalid'}]}).tabs[0].name,'Home')
+})
+
+test('selected tab name visibility is shared, survives reload and migrates the active legacy preference', () => {
+  const tabs = [{id:'home',name:'Home',hideName:true},{id:'work',name:'Work',hideName:false}]
+  assert.equal(normalizeSidebarLayout().showActiveTabName,false)
+  assert.equal(normalizeSidebarLayout({tabs,active:'home'}).showActiveTabName,false)
+  const migrated = normalizeSidebarLayout({tabs,active:'work'})
+  assert.equal(migrated.showActiveTabName,true)
+  assert.ok(migrated.tabs.every(tab=>!('hideName' in tab)))
+  for (const showActiveTabName of [true,false]) {
+    const normalized = normalizeSidebarLayout({tabs,active:'work',showActiveTabName})
+    assert.equal(normalized.showActiveTabName,showActiveTabName)
+    for (const active of ['home','work','missing']) {
+      const layout = normalizeSidebarLayout({...normalized,active})
+      assert.equal(layout.showActiveTabName,showActiveTabName)
+      const prefs = readSidebarPreferences({getItem:()=>JSON.stringify({sectionLayout:layout})})
+      assert.deepEqual(prefs.sectionLayout,layout)
+      assert.deepEqual(normalizeSidebarLayout(layout),layout)
+    }
+  }
+})
+
+test('shared memberships migrate, deduplicate, repair orphans and preserve explicitly empty lists', () => {
+  const layout = normalizeSidebarLayout({tabs:[{id:'work',name:'Work'}], sections:{
+    pinned:{tab:'work',count:20},
+    projects:{tabs:['home','work','work','missing'],count:50},
+    recent:{tabs:[],tab:'home'},
+    conductors:{tabs:['missing']},
+  }})
+  assert.deepEqual(layout.sections.pinned,{tabs:['work'],count:20})
+  assert.deepEqual(layout.sections.projects,{tabs:['home','work'],count:50})
+  assert.deepEqual(layout.sections.recent,{tabs:[],count:10})
+  assert.deepEqual(layout.sections.conductors,{tabs:['home'],count:10})
+  assert.deepEqual(normalizeSidebarLayout(layout),layout)
+  assert.deepEqual(readSidebarPreferences({getItem:()=>JSON.stringify({sectionLayout:layout})}).sectionLayout,layout)
 })

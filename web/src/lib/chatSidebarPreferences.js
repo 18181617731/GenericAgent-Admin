@@ -1,3 +1,11 @@
+export const sidebarDisplayCounts = [5, 10, 15, 20, 50, 100]
+export const sidebarSectionKeys = ['pinned', 'conductors', 'projects', 'recent']
+export const sidebarTabIcons = ['grid', 'folder', 'briefcase', 'star', 'heart', 'code', 'terminal', 'book', 'file', 'message', 'bot', 'pin', 'flag', 'zap', 'globe', 'rocket', 'music', 'camera', 'image', 'coffee', 'palette', 'shield', 'wrench', 'calendar']
+export function normalizeSidebarOrder(value) {
+  const valid = Array.isArray(value) ? [...new Set(value.filter(key => sidebarSectionKeys.includes(key)))] : []
+  return [...valid, ...sidebarSectionKeys.filter(key => !valid.includes(key))]
+}
+
 export const recentFilterOptions = ['chat', 'project', 'conductor']
 
 export function normalizeRecentFilter(value) {
@@ -9,17 +17,21 @@ export const sidebarPreferenceDefaults = {
   showProjects: true, showConductor: true, sort: 'updated', recentFilter: [...recentFilterOptions],
   historyExpanded: true, pinnedExpanded: true, conductorsExpanded: false, projectsExpanded: true,
   showAllProjects: false, expandedProjectNames: [],
+  sectionLayout: normalizeSidebarLayout(),
+  showPinned: true, showRecent: true, sectionOrder: [...sidebarSectionKeys],
 }
 
 export function readSidebarPreferences(storage) {
   try {
     const value = JSON.parse((storage ?? globalThis.localStorage).getItem('ga-chat-sidebar-preferences') || '{}')
     const next = { ...sidebarPreferenceDefaults }
-    for (const key of ['showProjects', 'showConductor', 'historyExpanded', 'pinnedExpanded', 'conductorsExpanded', 'projectsExpanded', 'showAllProjects']) {
+    for (const key of ['showPinned', 'showRecent', 'showProjects', 'showConductor', 'historyExpanded', 'pinnedExpanded', 'conductorsExpanded', 'projectsExpanded', 'showAllProjects']) {
       if (typeof value?.[key] === 'boolean') next[key] = value[key]
     }
     if (typeof value?.showProjects !== 'boolean') next.showProjects = value?.layout !== 'list'
     if (value?.sort === 'priority') next.sort = 'priority'
+    next.sectionLayout = normalizeSidebarLayout(value?.sectionLayout)
+    next.sectionOrder = normalizeSidebarOrder(value?.sectionOrder)
     next.recentFilter = normalizeRecentFilter(value?.recentFilter)
     if (Array.isArray(value?.expandedProjectNames)) next.expandedProjectNames = [...new Set(value.expandedProjectNames.filter(name => typeof name === 'string'))]
     return next
@@ -45,4 +57,30 @@ export function filterSidebarRecentNodes(nodes, filter = 'all') {
       (selected.includes('conductor') && conductor) ||
       (selected.includes('chat') && !project && !conductor)
   })
+}
+
+
+export function normalizeSidebarLayout(value) {
+  const savedHome = Array.isArray(value?.tabs) ? value.tabs.find(tab => tab?.id === 'home') : null
+  const home = { id: 'home', name: typeof savedHome?.name === 'string' && savedHome.name.trim() ? savedHome.name.trim().slice(0, 40) : 'Home' }
+  if (sidebarTabIcons.includes(savedHome?.icon)) home.icon = savedHome.icon
+  const tabs = [home]
+  for (const tab of Array.isArray(value?.tabs) ? value.tabs : []) {
+    if (tabs.length >= 12) break
+    if (typeof tab?.id !== 'string' || !tab.id || tabs.some(t => t.id === tab.id)) continue
+    if (typeof tab.name === 'string' && tab.name.trim()) tabs.push({ id: tab.id, name: tab.name.trim().slice(0, 40), icon: sidebarTabIcons.includes(tab.icon) ? tab.icon : 'grid' })
+  }
+  const sections = Object.fromEntries(sidebarSectionKeys.map(key => {
+    const saved = value?.sections?.[key]
+    const assigned = Array.isArray(saved?.tabs) ? saved.tabs : [saved?.tab ?? 'home']
+    const valid = [...new Set(assigned.filter(id => tabs.some(tab => tab.id === id)))]
+    return [key, {
+      tabs: valid.length || !assigned.length ? valid : ['home'],
+      count: sidebarDisplayCounts.includes(saved?.count) ? saved.count : key === 'projects' ? 5 : 10,
+    }]
+  }))
+  const active = tabs.some(t => t.id === value?.active) ? value.active : 'home'
+  const savedActive = Array.isArray(value?.tabs) ? value.tabs.find(tab => tab?.id === active) : null
+  const showActiveTabName = typeof value?.showActiveTabName === 'boolean' ? value.showActiveTabName : savedActive?.hideName === false
+  return { tabs, sections, active, showActiveTabName }
 }

@@ -1,4 +1,5 @@
 import importlib.util
+import json
 import os
 import queue
 import sys
@@ -154,6 +155,28 @@ class ToolTimerTests(unittest.TestCase):
         self.assertEqual(len(registry["tool_before"]), 1)
         self.assertEqual(len(registry["tool_after"]), 1)
         self.assertEqual(chat_worker._consume_tool_elapsed_ms(), 0)
+
+    def test_progress_names_follow_active_stack_without_private_arguments(self):
+        hooks, _ = self.install_fake_hooks()
+        events = []
+        chat_worker._set_tool_timer_emitter(events.append)
+        try:
+            hooks.trigger("tool_before", {"tool_name": "code_run", "args": {"script": "PRIVATE"}})
+            hooks.trigger("tool_before", {"tool_name": "file_read", "response": "PRIVATE"})
+            self.assertEqual(events[-1]["tool_name"], "file_read")
+            self.assertEqual(events[-1]["tool_active_count"], 2)
+            hooks.trigger("tool_after", {"tool_name": "file_read"})
+            self.assertEqual(events[-1]["tool_name"], "code_run")
+            hooks.trigger("tool_after", {"tool_name": "code_run"})
+            self.assertEqual(events[-1]["tool_name"], "")
+            self.assertEqual(events[-1]["tool_active_count"], 0)
+            hooks.trigger("tool_before", {"tool_name": "PRIVATE/path credential"})
+            self.assertEqual(events[-1]["tool_name"], "")
+            self.assertNotIn("PRIVATE", json.dumps(events))
+            chat_worker._reset_tool_elapsed()
+            self.assertEqual(chat_worker._tool_timer_snapshot()[1]["tool_name"], "")
+        finally:
+            chat_worker._clear_tool_timer_emitter()
 
 
 class ChatWorkerProtocolTest(unittest.TestCase):
@@ -317,6 +340,56 @@ class ChatWorkerProtocolTest(unittest.TestCase):
             "cached_tokens": 0,
             "input_tokens_include_cache_read": 0,
         })
+
+    def test_output_rate_request_time_includes_hidden_reasoning_and_usage_completion(self):
+        chat_worker._reset_usage()
+        capture = chat_worker._UsageCapturingStderr(SimpleNamespace(write=lambda text: None, flush=lambda: None))
+
+        def response():
+            yield "first"
+            yield "last"
+            capture.write("[Output] tokens=2000\n")
+
+        with mock.patch.object(chat_worker.time, "perf_counter", side_effect=[39.5, 40.0, 40.5]):
+            list(chat_worker._track_outbound_attempt(response(), 10.0))
+        usage = chat_worker._snapshot_turn_usages()[0]
+        self.assertEqual(usage["ttft_ms"], 29500)
+        self.assertEqual(usage["generation_ms"], 500)
+        self.assertEqual(usage["request_elapsed_ms"], 30500)
+        self.assertNotIn("request_elapsed_ms", chat_worker._snapshot_usage())
+
+    def test_request_time_is_available_for_buffered_and_tool_only_output(self):
+        for chunks in [["buffered response"], []]:
+            with self.subTest(chunks=chunks):
+                chat_worker._reset_usage()
+                capture = chat_worker._UsageCapturingStderr(SimpleNamespace(write=lambda text: None, flush=lambda: None))
+
+                def response():
+                    yield from chunks
+                    capture.write("[Output] tokens=1000\n")
+
+                clock = [30.0, 30.0] if chunks else [30.0]
+                with mock.patch.object(chat_worker.time, "perf_counter", side_effect=clock):
+                    list(chat_worker._track_outbound_attempt(response(), 10.0))
+                usage = chat_worker._snapshot_turn_usages()[0]
+                self.assertEqual(usage["request_elapsed_ms"], 20000)
+                self.assertNotIn("generation_ms", usage)
+
+    def test_request_timer_is_not_reused_by_a_later_unhooked_output(self):
+        chat_worker._reset_usage()
+        capture = chat_worker._UsageCapturingStderr(SimpleNamespace(write=lambda text: None, flush=lambda: None))
+
+        def response():
+            capture.write("[Output] tokens=100\n")
+            if False:
+                yield ""
+
+        with mock.patch.object(chat_worker.time, "perf_counter", return_value=12.0):
+            list(chat_worker._track_outbound_attempt(response(), 10.0))
+        capture.write("[Output] tokens=50\n")
+        usages = chat_worker._snapshot_turn_usages()
+        self.assertEqual(usages[0]["request_elapsed_ms"], 2000)
+        self.assertNotIn("request_elapsed_ms", usages[1])
 
     def test_generation_rate_uses_last_text_not_usage_log_time(self):
         chat_worker._reset_usage()
