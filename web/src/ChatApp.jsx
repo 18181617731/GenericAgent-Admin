@@ -1,7 +1,8 @@
 import { ChatPackageBar } from './ui/chatChrome'
 import { UiSurface, useUiPackage } from './ui/UiHost'
 import { conductorSidebarActivity, conductorSidebarSections, conductorSessionTree } from './lib/chatConductor.js'
-import { readSidebarPreferences, sortSidebarSessions, filterSidebarRecentNodes } from './lib/chatSidebarPreferences.js'
+import { sortSidebarSessions, filterSidebarRecentNodes } from './lib/chatSidebarPreferences.js'
+import { useSidebarPreferences } from './hooks/useSidebarPreferences'
 import { normalizeChatAttachments, chatAttachmentSource } from './lib/chatAttachments.js'
 import './conductor.css'
 import './chatSidebar.css'
@@ -4815,14 +4816,7 @@ export default function ChatApp({ onOpenSettings } = {}) {
   const [projects, setProjects] = useState([])
   const [pinnedProjects, setPinnedProjects] = useState([])
   const [projectOrder, setProjectOrder] = useState([])
-  const [sidebarPreferences, setSidebarPreferences] = useState(() => readSidebarPreferences())
-  const updateSidebarPreference = (key, value) => {
-    setSidebarPreferences(current => {
-      const next = { ...current, [key]: typeof value === 'function' ? value(current[key]) : value }
-      try { localStorage.setItem('ga-chat-sidebar-preferences', JSON.stringify(next)) } catch { /* Optional preference storage. */ }
-      return next
-    })
-  }
+  const { preferences: sidebarPreferences, update: updateSidebarPreference, error: sidebarPreferencesError } = useSidebarPreferences()
   const historyExpanded = sidebarPreferences.historyExpanded
   const setHistoryExpanded = value => updateSidebarPreference('historyExpanded', value)
   const pinnedExpanded = sidebarPreferences.pinnedExpanded
@@ -4906,6 +4900,9 @@ export default function ChatApp({ onOpenSettings } = {}) {
   }, [])
   const [collapsed, setCollapsed] = useState(() => isNarrowChatViewport())
   const [notice, setNotice] = useState('')
+  useEffect(() => {
+    if (sidebarPreferencesError) setNotice(ct('侧栏设置未保存到后端：', 'Sidebar settings were not saved to the server: ') + sidebarPreferencesError)
+  }, [sidebarPreferencesError, ct])
   const [sessionCopyNotice, updateSessionCopyNotice] = useState('')
   const sessionCopyNoticeTimerRef = useRef(null)
   const setSessionCopyNotice = useCallback((message) => {

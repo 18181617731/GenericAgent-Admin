@@ -21,21 +21,24 @@ export const sidebarPreferenceDefaults = {
   showPinned: true, showRecent: true, sectionOrder: [...sidebarSectionKeys],
 }
 
+export function normalizeSidebarPreferences(value) {
+  const next = { ...sidebarPreferenceDefaults }
+  for (const key of ['showPinned', 'showRecent', 'showProjects', 'showConductor', 'historyExpanded', 'pinnedExpanded', 'conductorsExpanded', 'projectsExpanded', 'showAllProjects']) {
+    if (typeof value?.[key] === 'boolean') next[key] = value[key]
+  }
+  if (typeof value?.showProjects !== 'boolean') next.showProjects = value?.layout !== 'list'
+  if (value?.sort === 'priority') next.sort = 'priority'
+  next.sectionLayout = normalizeSidebarLayout(value?.sectionLayout)
+  next.sectionOrder = normalizeSidebarOrder(value?.sectionOrder)
+  next.recentFilter = normalizeRecentFilter(value?.recentFilter)
+  if (Array.isArray(value?.expandedProjectNames)) next.expandedProjectNames = [...new Set(value.expandedProjectNames.filter(name => typeof name === 'string'))]
+  return next
+}
+export const sidebarPreferencesStorageKey = 'ga-chat-sidebar-preferences'
 export function readSidebarPreferences(storage) {
   try {
-    const value = JSON.parse((storage ?? globalThis.localStorage).getItem('ga-chat-sidebar-preferences') || '{}')
-    const next = { ...sidebarPreferenceDefaults }
-    for (const key of ['showPinned', 'showRecent', 'showProjects', 'showConductor', 'historyExpanded', 'pinnedExpanded', 'conductorsExpanded', 'projectsExpanded', 'showAllProjects']) {
-      if (typeof value?.[key] === 'boolean') next[key] = value[key]
-    }
-    if (typeof value?.showProjects !== 'boolean') next.showProjects = value?.layout !== 'list'
-    if (value?.sort === 'priority') next.sort = 'priority'
-    next.sectionLayout = normalizeSidebarLayout(value?.sectionLayout)
-    next.sectionOrder = normalizeSidebarOrder(value?.sectionOrder)
-    next.recentFilter = normalizeRecentFilter(value?.recentFilter)
-    if (Array.isArray(value?.expandedProjectNames)) next.expandedProjectNames = [...new Set(value.expandedProjectNames.filter(name => typeof name === 'string'))]
-    return next
-  } catch { return { ...sidebarPreferenceDefaults } }
+    return normalizeSidebarPreferences(JSON.parse((storage ?? globalThis.localStorage).getItem(sidebarPreferencesStorageKey) || '{}'))
+  } catch { return normalizeSidebarPreferences({}) }
 }
 export function sortSidebarSessions(sessions, mode) {
   const time = value => {

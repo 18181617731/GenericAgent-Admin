@@ -207,6 +207,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/channels/test", s.channelTest)
 	mux.HandleFunc("/api/channels", s.requireDangerousConfirm(s.channels))
 	mux.HandleFunc("/api/usage/overview", s.usageOverview)
+	mux.HandleFunc("/api/chat/sidebar-preferences", s.chatSidebarPreferences)
 	mux.HandleFunc("/api/chat/sessions", s.withChatInstance((*Server).chatSessions))
 	mux.HandleFunc("/api/chat/python/install-deps", s.requireDangerousConfirm(s.withChatInstance((*Server).chatPythonInstallDeps)))
 	mux.HandleFunc("/api/chat/", s.withChatInstance((*Server).chatHandler))
@@ -252,6 +253,7 @@ var riskCatalogItems = []riskCatalogItem{
 	{Path: "/api/files/delete", Level: "dangerous", Action: "delete_file", Reason: "deletes a file or directory under the configured GA root"},
 	{Path: "/api/files/open", Level: "reversible", Action: "open_file_shell", Reason: "spawns the OS desktop shell to open a GA file or its containing folder"},
 	{Path: "/api/config", Level: "reversible", Action: "save_config", Reason: "updates Admin-Go local config"},
+	{Path: "/api/chat/sidebar-preferences", Level: "reversible", Action: "save_sidebar_preferences", Reason: "persists Admin-wide sidebar UI preferences outside GA runtime configuration"},
 	{Path: "/api/ui/theme", Level: "reversible", Action: "save_ui_theme", Reason: "updates the persisted Admin-Go appearance theme without a confirm dialog"},
 	{Path: "/api/instances/create", Level: "reversible", Action: "create_instance", Reason: "adds a configured GA runtime instance"},
 	{Path: "/api/instances/update", Level: "reversible", Action: "update_instance", Reason: "updates a configured GA runtime instance when its manager is idle"},
