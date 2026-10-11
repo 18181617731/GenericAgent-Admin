@@ -32,6 +32,7 @@ import { useGSAP } from '@gsap/react'
 import { Bot, Check, CheckCheck, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, CircleAlert, CircleHelp, Clock3, Copy, CornerDownLeft, Download, Edit3, ExternalLink, FileArchive, FileCode2, FileImage, FileOutput, FileSpreadsheet, FileText, Folder, FolderOpen, FolderPlus, GitBranch, Hand, KeyRound, Loader2, Lock, Maximize, Maximize2, MessageSquarePlus, MoreHorizontal, Orbit, PanelLeftOpen, PanelLeftClose, PanelRightOpen, Paperclip, Pin, Plus, RotateCw, Search, Send, Settings, Sparkles, Square, Target, Trash2, X, ZoomIn, ZoomOut } from 'lucide-react'
 import { api, apiStream } from './lib/api'
 import { createChatSessionCache } from './lib/chatSessionCache.js'
+import { createChatSessionListReader } from './lib/chatSessionListReader.js'
 import { useChatHistoryPages } from './lib/useChatHistoryPages.js'
 import { useChatReadState } from './lib/useChatReadState.js'
 import { historyStatsMessages } from './lib/chatHistoryPages.js'
@@ -4994,6 +4995,15 @@ export default function ChatApp({ onOpenSettings } = {}) {
   }, [])
   const sessionCacheRef = useRef(null)
   if (!sessionCacheRef.current) sessionCacheRef.current = createChatSessionCache()
+  const sessionListReaderRef = useRef(null)
+  if (!sessionListReaderRef.current) sessionListReaderRef.current = createChatSessionListReader()
+  const loadSessionList = useCallback(async (options = {}) => {
+    const epoch = chatRequestEpochRef.current
+    const url = addChatInstanceToURL('/api/chat/sessions', chatInstanceRef.current)
+    const result = await sessionListReaderRef.current.load(url, options)
+    if (epoch !== chatRequestEpochRef.current) throw new DOMException('Chat instance changed', 'AbortError')
+    return result
+  }, [])
   const sessionLoadAbortRef = useRef(null)
   const loadSessionDetail = (id, options = {}) => sessionCacheRef.current.load(
     addChatInstanceToURL(`/api/chat/session/${id}?view=page`, chatInstanceRef.current), options,
@@ -5007,6 +5017,7 @@ export default function ChatApp({ onOpenSettings } = {}) {
   useEffect(() => () => {
     sessionLoadAbortRef.current?.abort()
     sessionCacheRef.current.clear()
+    sessionListReaderRef.current.clear()
   }, [])
   const chatFetch = useCallback(async (url, options) => {
     const epoch = chatRequestEpochRef.current
@@ -6029,7 +6040,7 @@ export default function ChatApp({ onOpenSettings } = {}) {
 
   const loadSessions = async (prefer = sid, options = {}) => {
     const { open = false } = options
-    const d = await chatApi('/api/chat/sessions')
+    const d = await loadSessionList({ fresh: true })
     const incoming = mergeChatSessionDraftSessions(d.sessions, chatInstanceRef.current)
     const list = reconcileSessionSummaries(sessionsRef.current, incoming)
     sessionsRef.current = list
@@ -7202,7 +7213,7 @@ export default function ChatApp({ onOpenSettings } = {}) {
       if (stopped || inFlight || (!shouldRefreshChatTaskbar() && !shouldPollConductorSessions(sessionsRef.current))) return
       inFlight = true
       try {
-        const d = await chatApi('/api/chat/sessions')
+        const d = await loadSessionList()
         if (!stopped) {
           const previous = sessionsRef.current
           const incoming = mergeChatSessionDraftSessions(d.sessions, chatInstanceRef.current)
@@ -7334,6 +7345,7 @@ export default function ChatApp({ onOpenSettings } = {}) {
     historyPages.clear()
     cancelSessionLoad()
     sessionCacheRef.current.clear()
+    sessionListReaderRef.current.clear()
     rememberRenderedSessionScroll()
     sessionScrollSnapshotsRef.current.clear()
     pendingSessionScrollRestoreRef.current = null
