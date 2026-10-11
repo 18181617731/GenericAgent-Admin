@@ -284,6 +284,7 @@ type chatRun struct {
 	QueueID            string
 	QueueIDs           []string
 	Events             [][]byte
+	ReplayCleanup      *time.Timer // guarded by ChatMu; never captures the event payload
 	TaskbarText        strings.Builder
 	TaskbarDirty       bool
 	TaskbarWaiting     bool
@@ -1151,8 +1152,13 @@ func (s *Server) beginChatRun(sid string) *chatRun {
 	if s.ChatRuns == nil {
 		s.ChatRuns = map[string]*chatRun{}
 	}
-	if r := s.ChatRuns[sid]; r != nil && !r.Done {
-		return nil
+	if r := s.ChatRuns[sid]; r != nil {
+		if !r.Done {
+			return nil
+		}
+		if r.ReplayCleanup != nil {
+			r.ReplayCleanup.Stop()
+		}
 	}
 	token := &chatRun{ID: newChatID(), SID: sid, Subscribers: map[chan []byte]bool{}}
 	s.ChatRuns[sid] = token
@@ -1471,31 +1477,34 @@ func (s *Server) publishChatLine(sid string, line []byte) {
 func (s *Server) endChatRunOwned(sid string, token *chatRun) {
 	sid = safeChatID(sid)
 	s.ChatMu.Lock()
+	defer s.ChatMu.Unlock()
 	r := s.ChatRuns[sid]
-	if token != nil && r != token {
-		s.ChatMu.Unlock()
+	if r == nil || (token != nil && r != token) || (r.Canceled && !r.CancelReady) {
 		return
 	}
-	if r != nil && r.Canceled && !r.CancelReady {
-		s.ChatMu.Unlock()
-		return
-	}
-	if r != nil && !r.Done {
+	if !r.Done {
 		r.Done = true
 		for ch := range r.Subscribers {
 			close(ch)
 		}
 		r.Subscribers = map[chan []byte]bool{}
 	}
-	s.ChatMu.Unlock()
-	go func() {
-		time.Sleep(5 * time.Minute)
-		s.ChatMu.Lock()
-		if rr := s.ChatRuns[sid]; rr == r && rr.Done {
-			delete(s.ChatRuns, sid)
-		}
-		s.ChatMu.Unlock()
-	}()
+	if r.ReplayCleanup != nil {
+		return
+	}
+	// Keep the five-minute replay window, without a sleeping goroutine or a
+	// closure retaining an obsolete run and all of its NDJSON payloads.
+	var timer *time.Timer
+	timer = time.AfterFunc(5*time.Minute, func() { s.expireChatRunReplay(sid, timer) })
+	r.ReplayCleanup = timer
+}
+
+func (s *Server) expireChatRunReplay(sid string, timer *time.Timer) {
+	s.ChatMu.Lock()
+	defer s.ChatMu.Unlock()
+	if r := s.ChatRuns[sid]; r != nil && r.Done && r.ReplayCleanup == timer {
+		delete(s.ChatRuns, sid)
+	}
 }
 
 func (s *Server) endChatRun(sid string) { s.endChatRunOwned(sid, nil) }
@@ -2993,6 +3002,11 @@ func (s *Server) CloseChatWorkers() {
 	}
 	var workers []*chatWorker
 	s.ChatMu.Lock()
+	for _, run := range s.ChatRuns {
+		if run != nil && run.ReplayCleanup != nil {
+			run.ReplayCleanup.Stop()
+		}
+	}
 	for sid, w := range s.ChatWorkers {
 		if w != nil {
 			workers = append(workers, w)
