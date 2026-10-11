@@ -78,7 +78,7 @@ export default function ChatVersionBadge({ version: suppliedVersion, children } 
     </button>
     {expanded && createPortal(<div ref={panel} id={contentID} role="dialog" aria-label={title} className="oa-sidebar-admin-content" style={position}
       onClick={event => { if (event.target.closest('button:not(:disabled)')) setExpanded(false) }}>{children}
-      <button type="button" className="oa-sidebar-settings" onClick={() => { setUpdateOpen(true); updates.loadUpdateSnapshot(notice.check); notice.dismiss() }}><Download size={15}/>{lang === 'en' ? 'Version updates' : '版本更新'}</button>
+      <button type="button" className="oa-sidebar-settings" onClick={() => { setUpdateOpen(true); updates.loadUpdateSnapshot(notice.check) }}><Download size={15}/>{lang === 'en' ? 'Version updates' : '版本更新'}</button>
     </div>, trigger.current.ownerDocument.body)}
     <SystemUpdateModal open={updateOpen} onClose={() => setUpdateOpen(false)} version={updates} lang={lang}/>
   </div>

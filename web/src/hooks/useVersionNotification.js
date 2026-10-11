@@ -28,7 +28,10 @@ export function useUpdateNotificationPreferences() {
 // Automatic checks are read-only, cached across reloads, and quiet on failure.
 export function useVersionNotification() {
   const { preferences, setEnabled } = useUpdateNotificationPreferences()
-  const [snapshot, setSnapshot] = useState(null)
+  const [snapshot, setSnapshot] = useState(() => {
+    const cached = readUpdateCheckCache()
+    return cached ? { currentVersion: cached.currentVersion, check: cached.lastKnownCheck ?? cached.check } : null
+  })
   useEffect(() => {
     if (!preferences.enabled) return undefined
     let disposed = false
@@ -50,20 +53,23 @@ export function useVersionNotification() {
         const cached = readUpdateCheckCache()
         const remaining = updateCheckCacheRemaining(cached, currentVersion)
         if (remaining) {
-          setSnapshot({ currentVersion, check: cached.check })
+          setSnapshot({ currentVersion, check: cached.lastKnownCheck ?? cached.check })
           delay = remaining
         } else {
           const check = await api('/api/version/check', { signal: controller.signal })
           if (disposed) return
           if (typeof check?.update !== 'boolean') throw new Error('Invalid version check')
           const saved = saveUpdateCheckCache(currentVersion, check)
-          setSnapshot({ currentVersion, check })
+          setSnapshot({ currentVersion, check: saved.lastKnownCheck ?? check })
           delay = updateCheckCacheRemaining(saved, currentVersion)
         }
       } catch {
         if (disposed) return
-        if (currentVersion) saveUpdateCheckCache(currentVersion, null)
-        setSnapshot(null)
+        if (currentVersion) {
+          const cached = saveUpdateCheckCache(currentVersion, null)
+          setSnapshot({ currentVersion, check: cached.lastKnownCheck })
+        }
+        // A temporary network failure is not evidence that the app was upgraded.
       } finally {
         clearTimeout(requestTimeout)
         controller = null
@@ -83,8 +89,5 @@ export function useVersionNotification() {
     }
   }, [preferences.enabled])
   const release = notificationRelease(snapshot?.check, preferences, snapshot?.currentVersion)
-  return {
-    release, check: snapshot?.check, setEnabled,
-    dismiss: () => saveNotificationPreferences({ dismissedVersion: release }),
-  }
+  return { release, check: snapshot?.check, setEnabled }
 }

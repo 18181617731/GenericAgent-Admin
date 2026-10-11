@@ -29,12 +29,12 @@ test('disable and dismissal persist independently and repeated writes are idempo
   saveNotificationPreferences({ enabled: true }, s)
   assert.equal(readNotificationPreferences(s).dismissedVersion, 'v1.2.3')
 })
-test('only a new, enabled, non-dismissed release is announced', () => {
+test('uninstalled releases stay announced regardless of legacy dismissal', () => {
   const enabled = { enabled: true, dismissedVersion: '' }
   assert.equal(notificationRelease(candidate, enabled, 'v1.2.2'), 'v1.2.3')
   for (const check of [null, {}, { update: false, latest: candidate.latest }, { update: true }, { update: true, latest: { tag_name: ' ' } }]) assert.equal(notificationRelease(check, enabled, 'v1.2.2'), '')
   assert.equal(notificationRelease(candidate, { ...enabled, enabled: false }, 'v1.2.2'), '')
-  assert.equal(notificationRelease(candidate, { ...enabled, dismissedVersion: '1.2.3' }, 'v1.2.2'), '')
+  assert.equal(notificationRelease(candidate, { ...enabled, dismissedVersion: '1.2.3' }, 'v1.2.2'), 'v1.2.3')
   assert.equal(notificationRelease(candidate, enabled, '1.2.3'), '')
   assert.equal(notificationRelease({ ...candidate, latest: { tag_name: 'v1.2.4' } }, { ...enabled, dismissedVersion: 'v1.2.3' }, 'v1.2.2'), 'v1.2.4')
 })
@@ -57,6 +57,17 @@ test('storage denial preserves controls and cache in memory', () => {
   saveNotificationPreferences({ enabled: true }, null)
   assert.equal(readNotificationPreferences(null).enabled, true)
   assert.deepEqual(readUpdateCheckCache(null), cached)
+})
+test('failed checks retain the known release but not across installed versions', () => {
+  for (const s of [storage(), null]) {
+    saveUpdateCheckCache('v1.2.2', candidate, 10000, s)
+    saveUpdateCheckCache('v1.2.2', null, 20000, s)
+    const retry = saveUpdateCheckCache('v1.2.2', null, 30000, s)
+    assert.equal(updateCheckCacheRemaining(retry, 'v1.2.2', 30000), UPDATE_CHECK_RETRY_MS)
+    assert.deepEqual(readUpdateCheckCache(s).lastKnownCheck, candidate)
+    saveUpdateCheckCache('v1.2.3', null, 40000, s)
+    assert.equal(readUpdateCheckCache(s).lastKnownCheck, undefined)
+  }
 })
 test('failed checks use a bounded retry delay', () => {
   const s = storage()

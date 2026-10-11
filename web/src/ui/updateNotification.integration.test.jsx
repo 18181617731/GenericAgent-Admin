@@ -7,7 +7,7 @@ import { UPDATE_CHECK_INTERVAL_MS, UPDATE_CHECK_RETRY_MS, UPDATE_CHECK_TIMEOUT_M
 import ChatVersionBadge from '../components/ChatVersionBadge'
 
 vi.mock('../lib/api', () => ({ api: vi.fn() }))
-vi.mock('../components/SystemUpdateModal', () => ({ default: ({ open, version }) => open ? <div data-testid="update-panel">{version.check?.latest?.tag_name}</div> : null }))
+vi.mock('../components/SystemUpdateModal', () => ({ default: ({ open, version, onClose }) => open ? <div data-testid="update-panel">{version.check?.latest?.tag_name}<button onClick={onClose}>Close update panel</button></div> : null }))
 const candidate = { update: true, latest: { tag_name: 'v1.2.3', body: 'Notes' } }
 const flush = async () => { await act(async () => { await Promise.resolve(); await Promise.resolve() }) }
 const checks = () => api.mock.calls.filter(([path]) => path === '/api/version/check')
@@ -43,11 +43,12 @@ it('persistent disable cancels checks while retaining manual API access', async 
   await act(async () => { await vi.advanceTimersByTimeAsync(UPDATE_CHECK_INTERVAL_MS * 2) })
   expect(checks()).toHaveLength(1); expect(hook.result.current.release).toBe('')
 })
-it('dismissal survives remount and a later release is announced', async () => {
+it('legacy dismissal cannot hide an uninstalled release across remounts', async () => {
+  saveNotificationPreferences({ dismissedVersion: 'v1.2.3' })
   const hook = renderHook(useVersionNotification); await flush()
-  act(() => hook.result.current.dismiss()); expect(hook.result.current.release).toBe('')
+  expect(hook.result.current.release).toBe('v1.2.3')
   hook.unmount(); const second = renderHook(useVersionNotification); await flush()
-  expect(second.result.current.release).toBe('')
+  expect(second.result.current.release).toBe('v1.2.3')
   api.mockImplementation(async path => path === '/api/version/info' ? { version: 'v1.2.2' } : { ...candidate, latest: { tag_name: 'v1.2.4' } })
   await act(async () => { await vi.advanceTimersByTimeAsync(UPDATE_CHECK_INTERVAL_MS) })
   expect(second.result.current.release).toBe('v1.2.4')
@@ -58,6 +59,21 @@ it('does not check in hidden pages and wakes on visibility', async () => {
   Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
   act(() => document.dispatchEvent(new Event('visibilitychange'))); await flush()
   expect(hook.result.current.release).toBe('v1.2.3')
+})
+it('restores a detected release even when version info is temporarily unavailable', async () => {
+  const hook = renderHook(useVersionNotification); await flush(); hook.unmount()
+  api.mockRejectedValue(new Error('offline'))
+  const second = renderHook(useVersionNotification); await flush()
+  expect(second.result.current.release).toBe('v1.2.3')
+})
+it('keeps a detected release when a later check says no update but the running version is unchanged', async () => {
+  const hook = renderHook(useVersionNotification); await flush()
+  api.mockImplementation(async path => path === '/api/version/info' ? { version: 'v1.2.2' } : { update: false })
+  await act(async () => { await vi.advanceTimersByTimeAsync(UPDATE_CHECK_INTERVAL_MS) })
+  expect(hook.result.current.release).toBe('v1.2.3')
+  hook.unmount()
+  const second = renderHook(useVersionNotification); await flush()
+  expect(second.result.current.release).toBe('v1.2.3')
 })
 it('silently retries failure after thirty minutes without rapid polling', async () => {
   api.mockImplementation(async path => { if (path === '/api/version/info') return { version: 'v1.2.2' }; throw new Error('rate limit') })
@@ -108,18 +124,42 @@ it('shows only a red dot beside the chat version, with no banner or automatic di
   expect(screen.queryByTestId('update-panel')).toBeNull()
   expect(api.mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false)
 })
-it('opening the existing update action marks only this release as seen and persists across remount', async () => {
+it('opening and closing the update panel keeps the dot across remounts', async () => {
   const view = render(<ChatVersionBadge version="v1.2.2"/>); await flush()
   fireEvent.click(screen.getByRole('button', { name: 'GenericAgent Admin v1.2.2' }))
   expect(screen.getByRole('img', { name: '有新版本' })).toBeTruthy()
   fireEvent.click(screen.getByRole('button', { name: '版本更新' })); await flush()
-  expect(screen.queryByRole('img', { name: '有新版本' })).toBeNull()
-  expect(screen.getByTestId('update-panel').textContent).toBe('v1.2.3')
-  expect(JSON.parse(localStorage.getItem(UPDATE_NOTIFICATION_KEY))).toEqual({ enabled: true, dismissedVersion: 'v1.2.3' })
+  expect(screen.getByRole('img', { name: '有新版本' })).toBeTruthy()
+  expect(screen.getByTestId('update-panel').textContent).toContain('v1.2.3')
+  expect(localStorage.getItem(UPDATE_NOTIFICATION_KEY)).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'Close update panel' }))
+  expect(screen.queryByTestId('update-panel')).toBeNull()
+  expect(screen.getByRole('img', { name: '有新版本' })).toBeTruthy()
   expect(api.mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false)
   view.unmount()
   render(<ChatVersionBadge version="v1.2.2"/>); await flush()
+  expect(screen.getByRole('img', { name: '有新版本' })).toBeTruthy()
+})
+it('only clears the dot once the running version matches the release', async () => {
+  const view = render(<ChatVersionBadge version="v1.2.2"/>); await flush()
+  expect(screen.getByRole('img', { name: '有新版本' })).toBeTruthy()
+  api.mockImplementation(async path => path === '/api/version/info' ? { version: 'v1.2.3' } : candidate)
+  act(() => document.dispatchEvent(new Event('visibilitychange'))); await flush()
   expect(screen.queryByRole('img', { name: '有新版本' })).toBeNull()
+  view.unmount()
+  render(<ChatVersionBadge version="v1.2.3"/>); await flush()
+  expect(screen.queryByRole('img', { name: '有新版本' })).toBeNull()
+})
+it('keeps a detected release during transient check failures and across remounts', async () => {
+  const hook = renderHook(useVersionNotification); await flush()
+  api.mockImplementation(async path => { if (path === '/api/version/info') return { version: 'v1.2.2' }; throw new Error('offline') })
+  await act(async () => { await vi.advanceTimersByTimeAsync(UPDATE_CHECK_INTERVAL_MS) })
+  expect(hook.result.current.release).toBe('v1.2.3')
+  hook.unmount()
+  const second = renderHook(useVersionNotification); await flush()
+  expect(second.result.current.release).toBe('v1.2.3')
+  await act(async () => { await vi.advanceTimersByTimeAsync(UPDATE_CHECK_RETRY_MS) })
+  expect(second.result.current.release).toBe('v1.2.3')
 })
 it('does not show a dot when there is no new release or checking fails', async () => {
   api.mockImplementation(async path => path === '/api/version/info' ? { version: 'v1.2.2' } : { update: false })

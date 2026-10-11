@@ -36,7 +36,8 @@ const normalizeVersion = value => String(value || '').trim().replace(/^v/i, '')
 export const notificationRelease = (check, preferences, currentVersion) => {
   const tag = check?.latest?.tag_name
   if (!preferences.enabled || check?.update !== true || typeof tag !== 'string' || !tag.trim()) return ''
-  if (normalizeVersion(tag) === normalizeVersion(currentVersion) || normalizeVersion(tag) === normalizeVersion(preferences.dismissedVersion)) return ''
+  // Seeing the update panel is not an upgrade; legacy dismissal must not hide the dot.
+  if (normalizeVersion(tag) === normalizeVersion(currentVersion)) return ''
   return tag
 }
 
@@ -48,7 +49,13 @@ export function readUpdateCheckCache(storage = browserStorage()) {
 }
 
 export function saveUpdateCheckCache(currentVersion, check, now = Date.now(), storage = browserStorage()) {
+  const previous = readUpdateCheckCache(storage)
   memoryCache = { currentVersion, check, checkedAt: now }
+  const known = previous?.lastKnownCheck ?? previous?.check
+  // Once detected, keep the reminder for this installed version until it changes.
+  if (check?.update !== true && previous?.currentVersion === currentVersion && known?.update === true) {
+    memoryCache.lastKnownCheck = known
+  }
   if (storage) {
     try { storage.setItem(UPDATE_CHECK_CACHE_KEY, JSON.stringify(memoryCache)); cacheFallback.delete(storage) }
     catch { cacheFallback.set(storage, memoryCache) }
