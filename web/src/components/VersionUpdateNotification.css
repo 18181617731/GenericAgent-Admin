@@ -1,0 +1,22 @@
+.version-update-notice {
+  position: fixed; right: max(24px, env(safe-area-inset-right)); bottom: max(24px, env(safe-area-inset-bottom)); z-index: 850;
+  display: flex; align-items: flex-start; gap: 12px; width: min(380px, calc(100vw - 32px)); box-sizing: border-box;
+  padding: 18px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-strong); color: var(--text);
+  box-shadow: 0 10px 36px rgba(0, 0, 0, .14); font-family: inherit; font-size: 13px;
+}
+.version-update-notice .version-update-notice-icon { flex: 0 0 auto; margin-top: 2px; color: var(--accent-text); }
+.version-update-notice .version-update-notice-content { flex: 1; min-width: 0; }
+.version-update-notice [role="status"] { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; }
+.version-update-notice strong { font-size: 14px; font-weight: 600; }
+.version-update-notice [role="status"] span { color: var(--accent-text); overflow-wrap: anywhere; }
+.version-update-notice p { margin: 6px 0 12px; color: var(--muted); font-size: 12px; line-height: 1.6; }
+.version-update-notice .version-update-notice-actions { display: flex; flex-wrap: wrap; gap: 8px 14px; }
+.version-update-notice button { display: inline-flex; align-items: center; justify-content: center; gap: 4px; width: auto; min-height: 28px; margin: 0; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
+.version-update-notice button.version-update-notice-review { color: var(--accent-text); font-weight: 600; }
+.version-update-notice button:hover { color: var(--text); background: var(--surface-muted); }
+.version-update-notice button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.version-update-notice button.version-update-notice-close { flex: 0 0 auto; width: 28px; height: 28px; margin: -5px -5px 0 0; }
+@media (max-width: 640px) {
+  .version-update-notice { top: calc(60px + env(safe-area-inset-top)); bottom: auto; left: 12px; right: 12px; width: auto; padding: 14px; }
+  .version-update-notice button { min-height: 32px; }
+}

@@ -4,6 +4,7 @@ import { AlertCircle, CheckCircle2, Download, ExternalLink, RefreshCw, RotateCw 
 import { updateText, versionUpdateView } from '../lib/versionUpdateView'
 import { MarkdownPreview } from './FilePreviewLink'
 import GitHubMirrorSetting from './GitHubMirrorSetting'
+import { useUpdateNotificationPreferences } from '../hooks/useVersionNotification'
 import './system-update-modal.css'
 
 const dateLabel = (value, lang, fallback) => {
@@ -13,6 +14,7 @@ const dateLabel = (value, lang, fallback) => {
 
 export default function SystemUpdateModal({ open, onClose, version, lang = 'zh' }) {
   const text = updateText(lang)
+  const { preferences, setEnabled } = useUpdateNotificationPreferences()
   const { info, check, status, checking, checkError, statusError, actionError } = version
   const view = versionUpdateView(version, lang)
   const release = check?.latest
@@ -20,6 +22,10 @@ export default function SystemUpdateModal({ open, onClose, version, lang = 'zh' 
   return <Modal open={open} onCancel={onClose} footer={null} width={860} className="system-update-modal" title={text.title} mask={{ closable: false }}>
     <div className="system-update-body">
       <p className="system-update-subtitle">{text.subtitle}</p>
+      <label className="system-update-notification-setting">
+        <input type="checkbox" checked={preferences.enabled} onChange={event => setEnabled(event.target.checked)}/>
+        <span><strong>{text.autoReminders}</strong><small>{text.autoRemindersHint}</small></span>
+      </label>
       <div className="system-update-versions">
         <div><span>{text.current}</span><strong>{info?.version || text.unknown}</strong><small>{[info?.goos, info?.goarch].filter(Boolean).join(' / ') || text.unknown}</small></div>
         <div><span>{text.latest}</span><strong>{release?.tag_name || text.notChecked}</strong><small>{check?.checked_at ? `${text.checkedAt} ${dateLabel(check.checked_at, lang, text.unknown)}` : text.notesUnchecked}</small></div>

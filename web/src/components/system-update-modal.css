@@ -112,3 +112,9 @@
   .system-update-modal .system-update-footer { padding: 12px 16px; }
   .system-update-modal .system-update-actions button { min-height: 42px; flex: 1 1 auto; }
 }
+
+.system-update-modal .system-update-notification-setting { display: flex; align-items: flex-start; gap: 10px; margin: 0 0 20px; cursor: pointer; }
+.system-update-modal .system-update-notification-setting input { flex: 0 0 auto; width: 16px; height: 16px; min-height: 0; margin: 3px 0 0; padding: 0; accent-color: var(--accent); }
+.system-update-modal .system-update-notification-setting span { min-width: 0; }
+.system-update-modal .system-update-notification-setting strong { display: block; color: var(--text); font-size: 13px; font-weight: 500; }
+.system-update-modal .system-update-notification-setting small { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.6; }

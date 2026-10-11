@@ -49,7 +49,8 @@ export function useVersionUpdates({ t, lang, setMsg, setBusy, active = true }) {
   // Loaded alongside the workspace boot sequence so the shell can render the
   // version card without a second round trip. The local git status comes along
   // because it decides whether the GA source card applies at all.
-  const loadUpdateSnapshot = async () => {
+  const loadUpdateSnapshot = async (candidate = null) => {
+    if (candidate?.latest && typeof candidate.update === 'boolean') setCheck(candidate)
     const results = await Promise.allSettled([
       api('/api/version/info'),
       refreshStatus(),
