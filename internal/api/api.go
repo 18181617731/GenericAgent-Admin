@@ -48,6 +48,7 @@ type Server struct {
 	ConfigMu            *sync.Mutex
 	ChatRuns            map[string]*chatRun
 	ChatWorkers         map[string]*chatWorker
+	chatWorkersClosing  bool // legacy servers without a chatRuntime; guarded by ChatMu
 	ChatLoopControllers map[string]*chatLoopControllerRun
 	ChatTitleJobs       map[string]bool
 	ChatRuntimes        *chatRuntimeRegistry

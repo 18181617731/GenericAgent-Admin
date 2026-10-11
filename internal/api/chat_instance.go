@@ -38,6 +38,7 @@ type chatRuntime struct {
 	conductorOwned      map[string]bool // guarded by SessionMu; never reconstructed from disk
 	runs                map[string]*chatRun
 	workers             map[string]*chatWorker
+	workersClosing      bool // guarded by chatMu
 	loopControllers     map[string]*chatLoopControllerRun
 	titleJobs           map[string]bool
 	loopRecoveryOnce    sync.Once
@@ -52,6 +53,7 @@ type chatRuntime struct {
 type chatRuntimeRegistry struct {
 	mu      sync.Mutex
 	entries map[string]*chatRuntime
+	closed  bool // guarded by mu
 }
 
 func newChatRuntimeRegistry() *chatRuntimeRegistry {
@@ -73,6 +75,7 @@ func (r *chatRuntimeRegistry) runtime(instanceID string) *chatRuntime {
 		loopControllers: make(map[string]*chatLoopControllerRun),
 		titleJobs:       make(map[string]bool),
 	}
+	runtime.workersClosing = r.closed
 	r.entries[instanceID] = runtime
 	return runtime
 }

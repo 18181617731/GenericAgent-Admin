@@ -301,13 +301,18 @@ type chatRun struct {
 const chatRunSubscriberBuffer = 4096
 
 type chatWorker struct {
-	SID    string
-	Cmd    *exec.Cmd
-	Stdin  io.WriteCloser
-	Stdout io.ReadCloser
-	Stderr io.ReadCloser
-	Dead   bool
-	Mu     sync.Mutex
+	SID         string
+	Cmd         *exec.Cmd
+	Stdin       io.WriteCloser
+	Stdout      io.ReadCloser
+	Stderr      io.ReadCloser
+	Dead        bool // lifecycle fields below are guarded by ChatMu, not Mu
+	Users       int
+	Ready       chan struct{}
+	StartErr    error
+	IdleCleanup *time.Timer
+	stopOnce    sync.Once
+	Mu          sync.Mutex
 }
 
 type oneShotBTWWorkerObserver struct {
@@ -510,6 +515,7 @@ func (s *Server) runChatWorkerOwned(sid string, token *chatRun, cs chatSession, 
 		s.endChatRunOwned(sid, token)
 		return
 	}
+	defer s.releaseChatWorker(sid, worker)
 	s.setChatRunCmd(sid, worker.Cmd)
 	if token != nil && !s.ownsChatRun(sid, token) {
 		s.dropChatWorker(sid, worker)
@@ -1870,47 +1876,7 @@ func chatLLMIndex(v interface{}) (int, bool) {
 	}
 }
 
-func (s *Server) getChatWorker(sid string) (*chatWorker, error) {
-	sid = safeChatID(sid)
-	s.ChatMu.Lock()
-	if s.ChatWorkers == nil {
-		s.ChatWorkers = map[string]*chatWorker{}
-	}
-	if w := s.ChatWorkers[sid]; w != nil && !w.Dead && w.Cmd != nil && w.Cmd.Process != nil {
-		s.ChatMu.Unlock()
-		return w, nil
-	}
-	s.ChatMu.Unlock()
-	worker, err := startChatWorkerFunc(s.CfgStore.Snapshot(), sid)
-	if err != nil {
-		return nil, err
-	}
-	s.ChatMu.Lock()
-	if s.ChatWorkers == nil {
-		s.ChatWorkers = map[string]*chatWorker{}
-	}
-	s.ChatWorkers[sid] = worker
-	s.ChatMu.Unlock()
-	return worker, nil
-}
-
 var startChatWorkerFunc = startChatWorker
-
-func (s *Server) dropChatWorker(sid string, worker *chatWorker) {
-	sid = safeChatID(sid)
-	s.ChatMu.Lock()
-	if s.ChatWorkers[sid] == worker {
-		delete(s.ChatWorkers, sid)
-	}
-	if worker != nil {
-		worker.Dead = true
-	}
-	s.ChatMu.Unlock()
-	if worker != nil && worker.Cmd != nil && worker.Cmd.Process != nil {
-		_ = worker.Cmd.Process.Kill()
-		_, _ = worker.Cmd.Process.Wait()
-	}
-}
 
 func startChatWorker(cfg config.AppConfig, sid string) (*chatWorker, error) {
 	root := cfg.GARoot
@@ -2993,31 +2959,4 @@ func buildPromptWithHistory(prompt string, messages []chatMessage) string {
 	return "以下是当前会话的历史上下文，请在回答时延续这些上下文，不要把它当作用户的新问题。\n" +
 		"<history>\n" + text + "\n</history>\n\n" +
 		"### 用户当前消息\n" + prompt
-}
-
-// CloseChatWorkers terminates all persistent chat worker child processes.
-func (s *Server) CloseChatWorkers() {
-	if s == nil {
-		return
-	}
-	var workers []*chatWorker
-	s.ChatMu.Lock()
-	for _, run := range s.ChatRuns {
-		if run != nil && run.ReplayCleanup != nil {
-			run.ReplayCleanup.Stop()
-		}
-	}
-	for sid, w := range s.ChatWorkers {
-		if w != nil {
-			workers = append(workers, w)
-		}
-		delete(s.ChatWorkers, sid)
-	}
-	s.ChatMu.Unlock()
-	for _, w := range workers {
-		if w.Cmd != nil && w.Cmd.Process != nil {
-			_ = w.Cmd.Process.Kill()
-			_, _ = w.Cmd.Process.Wait()
-		}
-	}
 }
