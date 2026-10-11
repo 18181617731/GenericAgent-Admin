@@ -12,7 +12,6 @@ import './style.css'
 import { RouteFallback, ErrorBoundary } from './components/feedback.jsx'
 import { AppDialogHost } from './components/AppDialogHost.jsx'
 import { GlobalImagePreview } from './components/GlobalImagePreview.jsx'
-import VersionUpdateNotification from './components/VersionUpdateNotification.jsx'
 import './theme-tokens.css'
 import { UiHost } from './ui/UiHost'
 import { applyThemeToDocument, createAntdTheme, getInitialCustomColors, getInitialTheme, getTheme, hydrateCustomColors, isThemeId } from './themes'
@@ -99,7 +98,6 @@ function LocalizedRoot() {
   return <ConfigProvider locale={lang === 'en' ? enUS : zhCN} theme={componentTheme}>
     <AppDialogHost />
     <GlobalImagePreview />
-    {!isolatedUiRoute && <VersionUpdateNotification lang={lang}/>}
     <ErrorBoundary>
       <Suspense fallback={<RouteFallback label={loading} />}>
         {isolatedUiRoute ? (uiMode === 'safe' ? <UiRecovery/> : <UiPreview/>) : <UiHost><RoutedRoot /></UiHost>}

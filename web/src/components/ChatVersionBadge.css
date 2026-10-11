@@ -28,6 +28,14 @@
   font-size: 11px;
   color: var(--muted);
 }
+.oa-chat-version-dot {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  align-self: center;
+  border-radius: 50%;
+  background: #ef4444;
+}
 .oa-chat .oa-sidebar .oa-sidebar-admin-toggle > svg { flex: 0 0 auto; transform: rotate(180deg); color: var(--muted); }
 .oa-chat .oa-sidebar .oa-sidebar-admin-toggle[aria-expanded="true"] > svg { transform: none; }
 .oa-chat .oa-sidebar .oa-sidebar-foot .oa-sidebar-admin-toggle:hover,

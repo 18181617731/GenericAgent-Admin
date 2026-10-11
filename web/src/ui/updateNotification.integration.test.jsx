@@ -4,7 +4,7 @@ import { act, cleanup, fireEvent, render, renderHook, screen } from '@testing-li
 import { api } from '../lib/api'
 import { useVersionNotification, useUpdateNotificationPreferences } from '../hooks/useVersionNotification'
 import { UPDATE_CHECK_INTERVAL_MS, UPDATE_CHECK_RETRY_MS, UPDATE_CHECK_TIMEOUT_MS, UPDATE_NOTIFICATION_KEY, saveNotificationPreferences } from '../lib/updateNotifications'
-import VersionUpdateNotification from '../components/VersionUpdateNotification'
+import ChatVersionBadge from '../components/ChatVersionBadge'
 
 vi.mock('../lib/api', () => ({ api: vi.fn() }))
 vi.mock('../components/SystemUpdateModal', () => ({ default: ({ open, version }) => open ? <div data-testid="update-panel">{version.check?.latest?.tag_name}</div> : null }))
@@ -98,23 +98,40 @@ it('bounds a stalled check and quietly retries later', async () => {
   await act(async () => vi.advanceTimersByTime(UPDATE_CHECK_RETRY_MS))
   expect(checks()).toHaveLength(2)
 })
-it('offers close, persistent opt-out and review without starting an update', async () => {
-  render(<VersionUpdateNotification lang="en"/>); await flush()
-  expect(screen.getByLabelText('New version available')).toBeTruthy()
-  fireEvent.click(screen.getByRole('button', { name: 'View update' })); await flush()
-  expect(screen.getByTestId('update-panel').textContent).toBe('v1.2.3')
-  expect(screen.queryByLabelText('New version available')).toBeNull()
+it('shows only a red dot beside the chat version, with no banner or automatic dialog', async () => {
+  render(<ChatVersionBadge version="v1.2.2"/>); await flush()
+  const dot = screen.getByRole('img', { name: '有新版本' })
+  expect(dot.className).toBe('oa-chat-version-dot')
+  expect(dot.previousElementSibling.textContent).toBe('v1.2.2')
+  expect(dot.getAttribute('title')).toBe('v1.2.3')
+  expect(document.querySelector('.version-update-notice')).toBeNull()
+  expect(screen.queryByTestId('update-panel')).toBeNull()
   expect(api.mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false)
 })
-it('close dismisses this release without disabling future reminders', async () => {
-  render(<VersionUpdateNotification lang="en"/>); await flush()
-  fireEvent.click(screen.getByRole('button', { name: 'Dismiss this version' }))
-  expect(screen.queryByLabelText('New version available')).toBeNull()
+it('opening the existing update action marks only this release as seen and persists across remount', async () => {
+  const view = render(<ChatVersionBadge version="v1.2.2"/>); await flush()
+  fireEvent.click(screen.getByRole('button', { name: 'GenericAgent Admin v1.2.2' }))
+  expect(screen.getByRole('img', { name: '有新版本' })).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: '版本更新' })); await flush()
+  expect(screen.queryByRole('img', { name: '有新版本' })).toBeNull()
+  expect(screen.getByTestId('update-panel').textContent).toBe('v1.2.3')
   expect(JSON.parse(localStorage.getItem(UPDATE_NOTIFICATION_KEY))).toEqual({ enabled: true, dismissedVersion: 'v1.2.3' })
+  expect(api.mock.calls.some(([, options]) => options?.method === 'POST')).toBe(false)
+  view.unmount()
+  render(<ChatVersionBadge version="v1.2.2"/>); await flush()
+  expect(screen.queryByRole('img', { name: '有新版本' })).toBeNull()
 })
-it('opt-out button hides the notice and persists the disabled setting', async () => {
-  render(<VersionUpdateNotification lang="en"/>); await flush()
-  fireEvent.click(screen.getByRole('button', { name: 'Turn off reminders' }))
-  expect(screen.queryByLabelText('New version available')).toBeNull()
-  expect(JSON.parse(localStorage.getItem(UPDATE_NOTIFICATION_KEY)).enabled).toBe(false)
+it('does not show a dot when there is no new release or checking fails', async () => {
+  api.mockImplementation(async path => path === '/api/version/info' ? { version: 'v1.2.2' } : { update: false })
+  const view = render(<ChatVersionBadge version="v1.2.2"/>); await flush()
+  expect(screen.queryByRole('img', { name: '有新版本' })).toBeNull()
+  view.unmount(); localStorage.clear()
+  api.mockRejectedValue(new Error('offline'))
+  render(<ChatVersionBadge version="v1.2.2"/>); await flush()
+  expect(screen.queryByRole('img', { name: '有新版本' })).toBeNull()
+})
+it('shows a dot for a future release after the previous release was seen', async () => {
+  saveNotificationPreferences({ dismissedVersion: 'v1.2.2' })
+  render(<ChatVersionBadge version="v1.2.1"/>); await flush()
+  expect(screen.getByRole('img', { name: '有新版本' })).toBeTruthy()
 })

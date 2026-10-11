@@ -24,7 +24,7 @@ export function useUpdateNotificationPreferences() {
   return { preferences, setEnabled: enabled => setPreferences(saveNotificationPreferences({ enabled })) }
 }
 
-// One host at the application root; version panels only subscribe to preferences.
+// The chat sidebar badge is the only automatic-check host.
 // Automatic checks are read-only, cached across reloads, and quiet on failure.
 export function useVersionNotification() {
   const { preferences, setEnabled } = useUpdateNotificationPreferences()

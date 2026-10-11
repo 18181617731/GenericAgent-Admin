@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { api } from '../lib/api'
 import ChatVersionBadge from './ChatVersionBadge'
 vi.mock('../lib/api', () => ({ api: vi.fn() }))
+vi.mock('../hooks/useVersionNotification', () => ({ useVersionNotification: () => ({ release: '', check: null, dismiss: () => {} }) }))
 
 afterEach(() => cleanup())
 beforeEach(() => { api.mockReset() })
