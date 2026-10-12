@@ -20,6 +20,8 @@ type chatMessageIndex struct {
 type chatPageMessage struct {
 	chatMessage
 	ContentRevision string `json:"content_revision"`
+	ExecutionCount  int    `json:"execution_count,omitempty"`
+	ContentPartial  bool   `json:"content_partial,omitempty"`
 }
 
 func (m chatPageMessage) MarshalJSON() ([]byte, error) {
@@ -31,7 +33,9 @@ func (m chatPageMessage) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		plain
 		ContentRevision string `json:"content_revision"`
-	}{plain: plain(message), ContentRevision: m.ContentRevision})
+		ExecutionCount  int    `json:"execution_count,omitempty"`
+		ContentPartial  bool   `json:"content_partial,omitempty"`
+	}{plain: plain(message), ContentRevision: m.ContentRevision, ExecutionCount: m.ExecutionCount, ContentPartial: m.ContentPartial})
 }
 
 type chatPageCursor struct {
@@ -113,6 +117,9 @@ func chatSessionView(cs chatSession, r *http.Request) (interface{}, int, error) 
 	for start > 0 && len(page) < limit {
 		i := start - 1
 		m := chatPageMessage{chatMessage: cs.Messages[i], ContentRevision: index[i].Revision}
+		if q.Get("execution") == "lazy" {
+			m = compactChatPageMessage(m)
+		}
 		// Pages contain whole messages, even when one message exceeds the byte budget.
 		b, err := json.Marshal(m)
 		if err != nil {

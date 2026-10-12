@@ -12,11 +12,13 @@ export function useChatHistoryPages({ api, setMessages, messagesRef, threadRef, 
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const olderRequestRef = useRef(null)
+  const messageRequestsRef = useRef(new Map())
 
   const cancel = () => {
     generationRef.current++
     for (const controller of requestsRef.current) controller.abort()
     requestsRef.current.clear()
+    messageRequestsRef.current.clear()
     olderRequestRef.current = null
     setLoading(false)
     setError('')
@@ -69,7 +71,7 @@ export function useChatHistoryPages({ api, setMessages, messagesRef, threadRef, 
     setLoading(true)
     setError('')
     const { snapshot } = current
-    await guardedRequest(`/api/chat/session/${encodeURIComponent(snapshot.id)}?view=page&before=${encodeURIComponent(snapshot.before)}`, earlier => {
+    await guardedRequest(`/api/chat/session/${encodeURIComponent(snapshot.id)}?view=page&before=${encodeURIComponent(snapshot.before)}&execution=lazy`, earlier => {
       const thread = threadRef.current
       pauseFollow()
       if (thread) anchorRef.current = { thread, top: thread.scrollTop, height: thread.scrollHeight }
@@ -84,6 +86,44 @@ export function useChatHistoryPages({ api, setMessages, messagesRef, threadRef, 
       olderRequestRef.current = null
       setLoading(false)
     }
+  }
+  const loadMessage = (message) => {
+    const current = currentRef.current
+    if (!current || !message.content_partial) return Promise.resolve(message)
+    const key = `${current.key}:${message.id}:${message.content_revision}`
+    if (messageRequestsRef.current.has(key)) return messageRequestsRef.current.get(key)
+    const generation = generationRef.current
+    const controller = new AbortController()
+    requestsRef.current.add(controller)
+    const request = Promise.resolve().then(async () => {
+      try {
+        const url = new URL(current.key, window.location.origin)
+        url.searchParams.set('view', 'message')
+        url.searchParams.delete('execution')
+        url.searchParams.delete('before')
+        url.searchParams.set('message_id', message.id)
+        url.searchParams.set('revision', message.content_revision)
+        const full = await api(`${url.pathname}${url.search}`, { signal: controller.signal })
+        const present = messagesRef.current.find(item => item.id === message.id)
+        if (controller.signal.aborted || generation !== generationRef.current || !present || present.content_revision !== message.content_revision) {
+          throw new DOMException('Stale message response', 'AbortError')
+        }
+        if (full.id !== message.id || full.content_revision !== message.content_revision || full.content_partial) throw new Error('message changed; refresh history')
+        const messages = messagesRef.current.map(item => item.id === message.id ? { ...full, ...(item.render_key ? { render_key: item.render_key } : {}) } : item)
+        currentRef.current = { ...currentRef.current, snapshot: { ...currentRef.current.snapshot, messages } }
+        messagesRef.current = messages
+        setMessages(messages)
+        return full
+      } catch (e) {
+        if (!controller.signal.aborted && generation === generationRef.current && /changed; refresh history/.test(e.message)) onConflict()
+        throw e
+      } finally {
+        requestsRef.current.delete(controller)
+        if (messageRequestsRef.current.get(key) === request) messageRequestsRef.current.delete(key)
+      }
+    })
+    messageRequestsRef.current.set(key, request)
+    return request
   }
   const loadOlderNearTop = () => {
     const thread = threadRef.current
@@ -100,5 +140,5 @@ export function useChatHistoryPages({ api, setMessages, messagesRef, threadRef, 
     for (const controller of requestsRef.current) controller.abort()
     cacheRef.current.clear()
   }, [])
-  return { page, loading, error, begin, clear, apply, loadOlder, loadOlderNearTop }
+  return { page, loading, error, begin, clear, apply, loadOlder, loadOlderNearTop, loadMessage }
 }

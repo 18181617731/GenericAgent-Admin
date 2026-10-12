@@ -1,13 +1,15 @@
 // Reuse only a contiguous, revision-checked suffix. A branch edit invalidates
-// earlier pages; the latest page always supplies complete, authoritative messages.
+// earlier pages; full cached bodies are reused only with the same revision.
 export function reconcileHistoryPage(latest, previous) {
   const index = latest.message_index
   const oldMessages = previous?.messages || []
   const oldById = new Map(oldMessages.map(message => [message.id, message]))
   // Carry only local render identity across authoritative snapshot replacement.
   const latestMessages = (latest.messages || []).map(message => {
-    const renderKey = oldById.get(message.id)?.render_key
-    return renderKey && renderKey !== message.render_key ? { ...message, render_key: renderKey } : message
+    const old = oldById.get(message.id)
+    const authoritative = message.content_partial && old && !old.content_partial && old.content_revision === message.content_revision ? old : message
+    const renderKey = old?.render_key
+    return renderKey && renderKey !== authoritative.render_key ? { ...authoritative, render_key: renderKey } : authoritative
   })
   if (!Array.isArray(index)) return { ...latest, messages: latestMessages }
   const first = index.findIndex(item => item.id === latestMessages[0]?.id)

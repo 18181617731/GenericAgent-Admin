@@ -48,7 +48,7 @@ import { loopSidebarView, updateSessionLoop } from './lib/chatLoopSidebar.js'
 import { normalizeLoopRecords } from './lib/chatLoopRecords.js'
 import { confirmDanger, showAppAlert } from './lib/danger'
 import { copyText, formatDuration, fuzzyMatch, goalBudgetPercent, goalTurnPercent } from './lib/format'
-import { JSON_TREE_CHILD_LIMIT, JSON_TREE_STRING_LIMIT, LIST_ITEM_LIMIT, LONG_TEXT_PREVIEW_CHARS, MARKDOWN_BLOCK_LIMIT, MARKDOWN_CHAR_LIMIT, MARKDOWN_LINE_LIMIT, assistantTurnFallbackTitle, isToolResultText, createAssistantContentParser, previewLongText, splitMarkdownParts, textRenderStats } from './lib/chatTextSafety'
+import { JSON_TREE_CHILD_LIMIT, JSON_TREE_STRING_LIMIT, LIST_ITEM_LIMIT, LONG_TEXT_PREVIEW_CHARS, MARKDOWN_BLOCK_LIMIT, MARKDOWN_CHAR_LIMIT, MARKDOWN_LINE_LIMIT, assistantTurnFallbackTitle, isToolResultText, createAssistantContentParser, cleanAssistantFinalBody, previewLongText, splitMarkdownParts, textRenderStats } from './lib/chatTextSafety'
 import { parseStructuredContent } from './lib/structuredContent'
 import { segmentAgentProtocolBlocks } from './lib/agentProtocol'
 import { aggregateChatTaskbarState, chatTaskbarState, publishTaskbarState, shouldRefreshChatTaskbar, waitingChatSessions } from './lib/chatTaskbar.js'
@@ -3343,12 +3343,40 @@ const AssistantTurn = memo(function AssistantTurn({ turn, current, stackOpen, pe
   </section>
 })
 
-const AssistantContent = memo(function AssistantContent({ content, structuredContent, pending, onAskReply, isLatestMessage = false, turnUsages, ultraplan_state, runStartedAtMS = 0, clockNow = 0, modelID = '' }) {
+const AssistantContent = memo(function AssistantContent({ content, structuredContent, pending, onAskReply, isLatestMessage = false, turnUsages, ultraplan_state, runStartedAtMS = 0, clockNow = 0, modelID = '', contentPartial = false, executionCount = 0, onLoadExecution }) {
   // Follow the run lifecycle until the user explicitly toggles execution history.
   const [stackOpenOverride, setStackOpenOverride] = useState(null)
+  const [executionLoading, setExecutionLoading] = useState(false)
+  const [executionError, setExecutionError] = useState('')
+  const executionRequestRef = useRef(null)
+  const executionMountedRef = useRef(true)
+  useEffect(() => { executionMountedRef.current = true; return () => { executionMountedRef.current = false } }, [])
+  const loadExecution = useCallback(async () => {
+    if (!contentPartial || !onLoadExecution || executionRequestRef.current) return
+    executionRequestRef.current = true
+    setExecutionLoading(true)
+    setExecutionError('')
+    try { await onLoadExecution() }
+    catch (e) { if (executionMountedRef.current && e.name !== 'AbortError') setExecutionError(String(e.message || e)) }
+    finally { executionRequestRef.current = null; if (executionMountedRef.current) setExecutionLoading(false) }
+  }, [contentPartial, onLoadExecution])
   const parseContent = useMemo(() => createAssistantContentParser(), [])
   const [autoCollapseProcess] = useAutoCollapseProcess()
   const stackOpen = stackOpenOverride ?? (Boolean(pending) || !autoCollapseProcess)
+  const autoExecutionRequested = useRef(false)
+  useEffect(() => {
+    if (contentPartial && stackOpen && !autoExecutionRequested.current) {
+      autoExecutionRequested.current = true
+      loadExecution()
+    }
+  }, [contentPartial, stackOpen, loadExecution])
+  const toggleExecution = () => {
+    setStackOpenOverride(!stackOpen)
+    if (!stackOpen && contentPartial) {
+      autoExecutionRequested.current = true
+      loadExecution()
+    }
+  }
   const liveUltraPlanState = useMemo(() => normalizeUltraPlanState(ultraplan_state), [ultraplan_state])
   const stats = useMemo(() => textRenderStats(content), [content])
   
@@ -3357,6 +3385,7 @@ const AssistantContent = memo(function AssistantContent({ content, structuredCon
   // complete protocol whenever it has turn markers so the terminal event cannot
   // replace the live turn stack with a differently shaped final-only view.
   const parsed = useMemo(() => {
+    if (contentPartial) return { runs: [], body: cleanAssistantFinalBody(content) }
     const textResult = parseContent(content)
     if (textResult.runs.length > 0) return textResult
     if (structuredContent) {
@@ -3364,8 +3393,8 @@ const AssistantContent = memo(function AssistantContent({ content, structuredCon
       if (result) return result
     }
     return textResult
-  }, [content, structuredContent, parseContent])
-  const hasTurnSplit = parsed.runs.length > 0
+  }, [content, structuredContent, parseContent, contentPartial])
+  const hasTurnSplit = parsed.runs.length > 0 || contentPartial
   const hasLiveUltraPlan = !!(liveUltraPlanState && (liveUltraPlanState.phases?.length > 0 || liveUltraPlanState.recentTasks?.length > 0 || liveUltraPlanState.objective))
   if (!content && pending && !hasLiveUltraPlan) {
     const startedAt = Number(runStartedAtMS) || 0
@@ -3399,15 +3428,18 @@ const AssistantContent = memo(function AssistantContent({ content, structuredCon
   const ultraPlanStateForLastRun = !parsed.body && hasLiveUltraPlan
     ? (liveUltraPlanState || ultraplan_state)
     : undefined
-  return <div className={`oa-content ${parsed.runs.length ? 'oa-agent-output' : ''}`}>
-    {parsed.runs.length > 0 && <div className={`oa-turn-stack ${stackOpen ? 'open' : 'collapsed'}`}>
-      <button className="oa-turn-stack-head" data-running={pending ? 'true' : 'false'} type="button" onClick={() => setStackOpenOverride(!stackOpen)} aria-expanded={stackOpen} title={stackOpen ? ct('折叠执行过程', 'Collapse execution') : ct('展开执行过程', 'Expand execution')}>
+  return <div className={`oa-content ${hasTurnSplit ? 'oa-agent-output' : ''}`}>
+    {hasTurnSplit && <div className={`oa-turn-stack ${stackOpen ? 'open' : 'collapsed'}`}>
+      <button className="oa-turn-stack-head" data-running={pending ? 'true' : 'false'} type="button" onClick={toggleExecution} aria-expanded={stackOpen} title={stackOpen ? ct('折叠执行过程', 'Collapse execution') : ct('展开执行过程', 'Expand execution')}>
         <span className="oa-run-dot"/>
         <span className="oa-run-label">{ct('执行过程', 'Execution')}</span>
-        <b>{parsed.runs.length}</b>
-        <em className="oa-run-status">{pending ? ct('正在生成', 'Generating') : ct('已完成', 'Completed')}</em>
+        <b>{contentPartial ? executionCount : parsed.runs.length}</b>
+        <em className="oa-run-status">{executionLoading ? ct('加载中', 'Loading') : pending ? ct('正在生成', 'Generating') : ct('已完成', 'Completed')}</em>
         <ChevronDown className="oa-stack-chevron" size={15}/>
       </button>
+      {contentPartial && stackOpen && <div className="oa-history-status" role="status" aria-live="polite">
+        {executionError ? <><span>{executionError}</span><button type="button" disabled={executionLoading} onClick={loadExecution}>{ct('重试', 'Retry')}</button></> : ct('正在加载执行详情…', 'Loading execution details…')}
+      </div>}
       {parsed.runs.map((run, index) => <AssistantTurn
         key={`${run.turn}-${index}`}
         turn={run}
@@ -3420,8 +3452,8 @@ const AssistantContent = memo(function AssistantContent({ content, structuredCon
         isLatestMessage={index === lastRunIndex && isLatestMessage}
       />)}
     </div>}
-    {(parsed.summary || parsed.body || !parsed.runs.length) && <div className={parsed.runs.length ? 'oa-final-answer' : ''}>
-      {parsed.runs.length > 0 && <div className="oa-final-label">返回给用户</div>}
+    {(parsed.summary || parsed.body || !parsed.runs.length) && <div className={executionCount || parsed.runs.length ? 'oa-final-answer' : ''}>
+      {(executionCount > 0 || parsed.runs.length > 0) && <div className="oa-final-label">返回给用户</div>}
       {parsed.tools && parsed.tools.length > 0 && <div className="oa-tools-section">
         {parsed.tools.map((call, idx) => <ToolCallBlock key={idx} call={call} onAskReply={onAskReply} />)}
       </div>}
@@ -3726,7 +3758,7 @@ export const WorldlineRestoreDialog = memo(function WorldlineRestoreDialog({ nod
 
 export const ChatMessage = memo(function ChatMessage({
   message: m, pending, onAskReply, isLatestMessage = false, onEditResend, onRetryBTW,
-  editDisabled = false, clockNow = 0, conductorWorker = false,
+  editDisabled = false, clockNow = 0, conductorWorker = false, onLoadMessage,
 }) {
   const userText = m.role === 'user' ? stripUserAttachmentBlock(m.content) : m.content
   const shortInstruction = '\n\n[Server-owned Conductor worker instruction]\nComplete only this delegated objective. Return a concise, evidence-based result for the parent.'
@@ -3767,11 +3799,14 @@ export const ChatMessage = memo(function ChatMessage({
   const isBTW = m.kind === 'btw'
   const btwDisplay = m.role === 'user' ? parseBTWDisplay(userText) : null
 
-  const copyContent = () => {
-    const txt = m.role === 'user' ? userText : (m.content || '')
-    navigator.clipboard.writeText(txt)
-      .then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500) })
-      .catch(e => setCopyErr(String(e)))
+  const copyContent = async () => {
+    try {
+      const full = m.content_partial ? await onLoadMessage(m) : m
+      const txt = m.role === 'user' ? userText : (full.content || '')
+      await navigator.clipboard.writeText(txt)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch (e) { if (e.name !== 'AbortError') setCopyErr(String(e)) }
   }
   const startMessageEdit = () => {
     setEditDraft(userText || '')
@@ -3852,7 +3887,7 @@ export const ChatMessage = memo(function ChatMessage({
                 ? <CommandResultCard result={m.commandResult} />
                 : m.btw_status === 'error'
                   ? <div className="oa-btw-error" role="alert"><span>{m.content || '侧问失败，请重试'}</span><button type="button" onClick={() => onRetryBTW?.(m)}>重试</button></div>
-                  : <AssistantContent content={isBTW ? stripBTWEcho(m.content) : m.content} structuredContent={m.structured_content} pending={m.btw_status === 'pending' || pending} onAskReply={onAskReply} isLatestMessage={isLatestMessage} turnUsages={turnUsages} ultraplan_state={m.ultraplan_state} runStartedAtMS={m.run_started_at_ms} clockNow={clockNow} modelID={assistantModelId} />}
+                  : <AssistantContent content={isBTW ? stripBTWEcho(m.content) : m.content} structuredContent={m.structured_content} pending={m.btw_status === 'pending' || pending} onAskReply={onAskReply} isLatestMessage={isLatestMessage} turnUsages={turnUsages} ultraplan_state={m.ultraplan_state} runStartedAtMS={m.run_started_at_ms} clockNow={clockNow} modelID={assistantModelId} contentPartial={m.content_partial} executionCount={m.execution_count} onLoadExecution={onLoadMessage ? () => onLoadMessage(m) : undefined} />}
             </>)
           : (<>
               {imageFiles.length > 0 && (
@@ -4078,7 +4113,7 @@ const VirtualMessageSlot = memo(function VirtualMessageSlot({
 })
 
 function MessageListContent({
-  messages, isCurrentRunning, onAskReply, onEditResend, onRetryBTW, clockNow,
+  messages, isCurrentRunning, onAskReply, onEditResend, onRetryBTW, clockNow, onLoadMessage,
   worldline, onSwitchVersion, conductorDetail, sessionKey,
 }) {
   const rootRef = useRef(null)
@@ -4210,6 +4245,7 @@ function MessageListContent({
               isLatestMessage={m.role === 'assistant' && m.id === lastMessageId}
               onEditResend={onEditResend}
               onRetryBTW={onRetryBTW}
+              onLoadMessage={onLoadMessage}
               editDisabled={isCurrentRunning}
               clockNow={clockNow}
             />
@@ -4232,7 +4268,7 @@ function MessageListContent({
 }
 
 export const MessageList = memo(function MessageList({
-  messages, isCurrentRunning, onAskReply, onEditResend, onRetryBTW, clockNow,
+  messages, isCurrentRunning, onAskReply, onEditResend, onRetryBTW, clockNow, onLoadMessage,
   worldline = null, onSwitchVersion = null, conductorDetail = null, sessionKey = '',
 }) {
   return <MessageListContent
@@ -4242,6 +4278,7 @@ export const MessageList = memo(function MessageList({
     onAskReply={onAskReply}
     onEditResend={onEditResend}
     onRetryBTW={onRetryBTW}
+              onLoadMessage={onLoadMessage}
     clockNow={clockNow}
     worldline={worldline}
     onSwitchVersion={onSwitchVersion}
@@ -5003,7 +5040,7 @@ export default function ChatApp({ onOpenSettings } = {}) {
   }, [])
   const sessionLoadAbortRef = useRef(null)
   const loadSessionDetail = (id, options = {}) => sessionCacheRef.current.load(
-    addChatInstanceToURL(`/api/chat/session/${id}?view=page`, chatInstanceRef.current), options,
+    addChatInstanceToURL(`/api/chat/session/${id}?view=page&execution=lazy`, chatInstanceRef.current), options,
   )
   const cancelSessionLoad = () => {
     sessionLoadAbortRef.current?.abort()
@@ -5913,7 +5950,7 @@ export default function ChatApp({ onOpenSettings } = {}) {
       persistSelectedChatSessionID(chatInstanceRef.current, d.id)
       scrollModeRef.current = 'auto'
       setSid(d.id)
-      historyPages.apply(d, addChatInstanceToURL(`/api/chat/session/${d.id}?view=page`, chatInstanceRef.current))
+      historyPages.apply(d, addChatInstanceToURL(`/api/chat/session/${d.id}?view=page&execution=lazy`, chatInstanceRef.current))
       setActiveSessionDetail(d)
       applyQueueSnapshot(d.queued_messages, d.id)
       setQueueEditingId('')
@@ -5949,12 +5986,12 @@ export default function ChatApp({ onOpenSettings } = {}) {
   const refreshCompletedRun = async (id, openToken, isCurrent) => {
     if (!isCurrent()) return
     const [d, state] = await Promise.all([
-      chatApi(`/api/chat/session/${id}?view=page`),
+      chatApi(`/api/chat/session/${id}?view=page&execution=lazy`),
       chatApi(`/api/chat/state/${id}`),
     ])
     if (!isCurrent()) return
     // Reconcile in place: reopening clears the thread and clamps its scrollTop.
-    historyPages.apply(d, addChatInstanceToURL(`/api/chat/session/${d.id}?view=page`, chatInstanceRef.current))
+    historyPages.apply(d, addChatInstanceToURL(`/api/chat/session/${d.id}?view=page&execution=lazy`, chatInstanceRef.current))
     applyQueueSnapshot(d.queued_messages, d.id)
     setRawHistory(Array.isArray(d.raw_history) ? d.raw_history : [])
     setHistoryInfo(Array.isArray(d.history_info) ? d.history_info : [])
@@ -5967,13 +6004,13 @@ export default function ChatApp({ onOpenSettings } = {}) {
   const refreshActiveSessionSnapshot = async (id) => {
     if (!id || activeSidRef.current !== id) return
     const streamActivityToken = streamActivitySeqRef.current
-    const d = await chatApi(`/api/chat/session/${id}?view=page`)
+    const d = await chatApi(`/api/chat/session/${id}?view=page&execution=lazy`)
     if (activeSidRef.current !== id || streamActivitySeqRef.current !== streamActivityToken) return
     // List summaries and detail responses are independent snapshots. An idle
     // summary does not prove this stream has delivered its final output.
     // Leave reconciliation to the stream owner while it is still active.
     if (streamAbortRef.current || activeRunRef.current) return
-    historyPages.apply(d, addChatInstanceToURL(`/api/chat/session/${d.id}?view=page`, chatInstanceRef.current))
+    historyPages.apply(d, addChatInstanceToURL(`/api/chat/session/${d.id}?view=page&execution=lazy`, chatInstanceRef.current))
     if (contextOpen) setContextRefresh(value => value + 1)
     setPlanState(d.plan || null)
   }

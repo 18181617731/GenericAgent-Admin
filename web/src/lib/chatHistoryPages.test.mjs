@@ -58,3 +58,13 @@ test('full-history statistics include older turns while live values override', (
   const combined = historyStatsMessages([{ id: 'a', usage: 1 }, { id: 'b', usage: 2 }], [{ id: 'b', usage: 3 }, { id: 'c', usage: 4 }])
   assert.deepEqual(combined.map(m => m.usage), [1, 3, 4])
 })
+
+
+test('lazy latest page reuses complete bodies only for the same revision', () => {
+  const full = { ...message('a'), content: 'full', render_key: 'pending-a' }
+  const partial = { ...message('a'), content: 'answer', content_partial: true }
+  const previous = { messages: [full] }
+  assert.equal(reconcileHistoryPage({ messages: [partial] }, previous).messages[0], full)
+  const changed = { ...partial, content_revision: 'changed' }
+  assert.deepEqual(reconcileHistoryPage({ messages: [changed] }, previous).messages[0], { ...changed, render_key: 'pending-a' })
+})
