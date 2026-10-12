@@ -457,7 +457,7 @@ func TestWorldlineRestorePersistsRestoredSession(t *testing.T) {
 			defer stdinR.Close()
 			defer stdoutW.Close()
 			var req map[string]interface{}
-			if json.NewDecoder(stdinR).Decode(&req) == nil {
+			if decodeWorkerTestRequest(stdinR, &req) == nil {
 				if active, ok := req["activate"].(bool); !ok || !active {
 					t.Errorf("worldline request activate = %#v, want true", req["activate"])
 				}
@@ -566,7 +566,7 @@ func TestWorldlineRestorePreservesMessagesConversation(t *testing.T) {
 			defer stdinR.Close()
 			defer stdoutW.Close()
 			var req map[string]interface{}
-			if json.NewDecoder(stdinR).Decode(&req) == nil {
+			if decodeWorkerTestRequest(stdinR, &req) == nil {
 				if active, ok := req["activate"].(bool); !ok || !active {
 					t.Errorf("worldline request activate = %#v, want true", req["activate"])
 				}
@@ -646,7 +646,7 @@ func TestWorldlineRestorePreservesMessagesCode(t *testing.T) {
 			defer stdinR.Close()
 			defer stdoutW.Close()
 			var req map[string]interface{}
-			if json.NewDecoder(stdinR).Decode(&req) == nil {
+			if decodeWorkerTestRequest(stdinR, &req) == nil {
 				if active, ok := req["activate"].(bool); !ok || !active {
 					t.Errorf("worldline request activate = %#v, want true", req["activate"])
 				}

@@ -1249,6 +1249,10 @@ func (s *Server) beginChatRun(sid string) *chatRun {
 	sid = safeChatID(sid)
 	s.ChatMu.Lock()
 	defer s.ChatMu.Unlock()
+	// 关闭 worker runtime 后，迟到的 Conductor 回调不得再预约运行或持久化。
+	if s.chatWorkersClosedLocked() {
+		return nil
+	}
 	if s.ChatRuns == nil {
 		s.ChatRuns = map[string]*chatRun{}
 	}

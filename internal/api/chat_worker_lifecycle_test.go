@@ -273,8 +273,8 @@ func TestChatWorkerIdleRetirementStopsRealSubprocess(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatal("retired subprocess is still running")
 		}
-	} else if _, err := cmd.Process.Wait(); !errors.Is(err, os.ErrProcessDone) {
-		t.Fatalf("retirement did not reap subprocess: %v", err)
+	} else {
+		assertUnixChatTestProcessReaped(t, cmd.Process)
 	}
 	if _, err := stdin.Write([]byte("{}\n")); !errors.Is(err, os.ErrClosed) {
 		t.Fatalf("stdin remains open: %v", err)

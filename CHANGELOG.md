@@ -2,6 +2,14 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.135 - 2026-10-12
+
+### Cross-platform lifecycle verification
+- Drain the complete newline-delimited worldline request in fake workers before replying, including the 512-byte JSON decoder boundary; retain all restore-state assertions.
+- Reject late run reservations after the worker runtime closes so Conductor callbacks cannot restart work or persist state during shutdown.
+- Wait for API test runtime cleanup and final session writes; verify subprocess termination, reaping and closed pipes on Windows and Linux/Go 1.23.
+- Add frame-boundary, malformed-frame and closed-runtime regression coverage; validate 1,539 Windows Go tests/subtests and 1,066 Linux API tests/subtests, frontend verification, Python protocols and Windows packaging.
+
 ## v1.0.134 - 2026-10-12
 
 ### Dual-source synchronization and release recovery

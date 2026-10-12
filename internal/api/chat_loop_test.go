@@ -69,6 +69,7 @@ func newChatLoopTestServer(t *testing.T) *Server {
 	updateTestConfig(t, s.CfgStore, func(cfg *config.AppConfig) {
 		cfg.ChatDataDir = filepath.Join(root, "chat-data")
 	})
+	t.Cleanup(func() { cleanupChatLoopTestServer(t, s) })
 	return s
 }
 
@@ -198,14 +199,9 @@ func blockChatLoopTestWorker(t *testing.T, s *Server, sid string) {
 	}
 	t.Cleanup(func() {
 		close(release)
-		deadline := time.Now().Add(2 * time.Second)
-		for s.chatRunActive(sid) && time.Now().Before(deadline) {
-			time.Sleep(5 * time.Millisecond)
-		}
+		// 等待取消握手和末次持久化，防止迟到回调在 TempDir 清理后继续写入。
+		cleanupChatLoopTestWorker(t, s, sid)
 		startChatWorkerFunc = old
-		if s.chatRunActive(sid) {
-			t.Errorf("chat run %q did not stop during test cleanup", sid)
-		}
 	})
 }
 

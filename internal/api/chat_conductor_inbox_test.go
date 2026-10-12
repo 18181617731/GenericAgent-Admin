@@ -61,6 +61,8 @@ func TestConductorCompletionDoesNotCreateUserTurn(t *testing.T) {
 
 func TestConductorCompletionInboxReplay(t *testing.T) {
 	s := newChatLoopTestServer(t)
+	t.Cleanup(func() { cleanupChatLoopTestWorker(t, s, "parent") })
+	blockChatLoopTestWorker(t, s, "parent")
 	token := s.beginChatRun("parent")
 	if token == nil {
 		t.Fatal("reserve")
