@@ -2,6 +2,12 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.136 - 2026-10-12
+
+### Deterministic chat lifecycle verification
+- Drain React initialization and the resolved stale request explicitly in the unmount regression instead of depending on a one-second polling window or a fixed number of microtasks.
+- Retain the fresh-chat title assertion before and after stale completion and prove that no stale session detail is requested; keep all production behavior and CI thresholds unchanged.
+
 ## v1.0.135 - 2026-10-12
 
 ### Cross-platform lifecycle verification

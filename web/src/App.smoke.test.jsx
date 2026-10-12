@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import React from 'react'
 import { afterEach, describe, expect, test, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { ChannelServiceTable, ObservabilityCard, ServiceRow } from './components/common.jsx'
 import App, { ChannelsPage, I18N } from './App.jsx'
 import ChatApp, { ChatMessage, GoalStatusCard, PlanTodoCard, ProviderModelCascade, WorldlinePanel } from './ChatApp.jsx'
@@ -3220,12 +3220,13 @@ describe('chat loop controls', () => {
     await waitFor(() => expect(sessionRequests).toBe(1))
     first.unmount()
 
-    render(<ChatApp />)
-    await waitFor(() => expect(document.querySelector('.oa-title b')?.textContent).toBe('Fresh chat'))
-    resolveStaleSessions(jsonResponse({ sessions:[{ id:'stale-session', title:'Stale chat', count:0, updated_at:'2026-08-18T09:00:00Z' }] }))
-    await Promise.resolve()
-    await Promise.resolve()
-    await Promise.resolve()
+    await act(async () => { render(<ChatApp />) })
+    expect(document.querySelector('.oa-title b')?.textContent).toBe('Fresh chat')
+    await act(async () => {
+      resolveStaleSessions(jsonResponse({ sessions:[{ id:'stale-session', title:'Stale chat', count:0, updated_at:'2026-08-18T09:00:00Z' }] }))
+      await staleSessions
+    })
+    expect(document.querySelector('.oa-title b')?.textContent).toBe('Fresh chat')
     expect(staleSessionRequests).toHaveLength(0)
   })
 
