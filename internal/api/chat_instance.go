@@ -48,6 +48,10 @@ type chatRuntime struct {
 	sessionListEntries  map[string]chatSessionListIndexEntry
 	sessionListLoaded   bool
 	sessionListLoadHook func(string)
+	listSyncMu          sync.Mutex
+	listSyncPath        string
+	listSyncSnapshots   []chatListSyncSnapshot
+	listSyncBytes       int
 }
 
 type chatRuntimeRegistry struct {

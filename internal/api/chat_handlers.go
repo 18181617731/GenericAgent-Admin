@@ -47,7 +47,13 @@ func (s *Server) chatSessions(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	projects, pinnedProjects := chatProjectNamesFor(cfg)
-	writeCachedJSON(w, r, map[string]interface{}{"sessions": items, "projects": projects, "project_items": discoverProjectItems(cfg), "pinned_projects": pinnedProjects, "project_order": loadProjectPrefs(cfg).Order})
+	metadata := map[string]interface{}{"projects": projects, "project_items": discoverProjectItems(cfg), "pinned_projects": pinnedProjects, "project_order": loadProjectPrefs(cfg).Order}
+	if r.URL.Query().Get("sync") == "1" {
+		s.writeChatListSync(w, r, items, metadata)
+		return
+	}
+	metadata["sessions"] = items
+	writeCachedJSON(w, r, metadata)
 }
 
 func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
