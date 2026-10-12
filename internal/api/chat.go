@@ -2044,22 +2044,6 @@ func chatLLMIndex(v interface{}) (int, bool) {
 
 var startChatWorkerFunc = startChatWorker
 
-func (s *Server) dropChatWorker(sid string, worker *chatWorker) {
-	sid = safeChatID(sid)
-	s.ChatMu.Lock()
-	if s.ChatWorkers[sid] == worker {
-		delete(s.ChatWorkers, sid)
-	}
-	if worker != nil {
-		worker.Dead = true
-	}
-	s.ChatMu.Unlock()
-	if worker != nil && worker.Cmd != nil && worker.Cmd.Process != nil {
-		_ = worker.Cmd.Process.Kill()
-		_, _ = worker.Cmd.Process.Wait()
-	}
-}
-
 func (s *Server) resetChatWorker(sid string) bool {
 	sid = safeChatID(sid)
 	s.ChatMu.Lock()

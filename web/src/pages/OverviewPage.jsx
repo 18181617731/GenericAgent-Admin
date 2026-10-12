@@ -79,7 +79,7 @@ export function OverviewPage({
       setMirrorSaving(false)
     }
   }
-  const { info, busy, gitBusy, gitStatus, autostart } = version
+  const { info, busy, gitBusy, gitStatus, autostart, check } = version
   const missingCore = observability?.missingCore || []
   const { sourceAvailable, sourceUnavailableReason, sourceState } = sourceAvailability(gitStatus, copy)
   const running = (services || []).filter(service => service.running)

@@ -8,7 +8,7 @@ export function partitionDiscoveredModels(candidates, existing) {
   return { pending: unique.filter(id => !ids.has(id)), added: unique.filter(id => ids.has(id)) }
 }
 
-export default function ModelDiscoveryList({ candidates, existing, onAdd, english = false }) {
+export default function ModelDiscoveryList({ candidates, existing, onAdd, english = false, addModelAria }) {
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState('pending')
   const groups = partitionDiscoveredModels(candidates, existing)
@@ -31,9 +31,9 @@ export default function ModelDiscoveryList({ candidates, existing, onAdd, englis
     <div className="model-discovery-results">
       {visible.map(model => <div className="model-discovery-row" key={model}>
         <span title={model}>{model}</span>
-        {category === 'added' ? <small>{label('已添加', 'Added')}</small> : <Button size="small" onClick={() => onAdd([model])} aria-label={label(`添加 ${model}`, `Add ${model}`)}>{label('添加', 'Add')}</Button>}
+        {category === 'added' ? <small>{label('已添加', 'Added')}</small> : <Button size="small" onClick={() => onAdd([model])} aria-label={addModelAria ? addModelAria(model) : label(`添加 ${model}`, `Add ${model}`)}>{label('添加', 'Add')}</Button>}
       </div>)}
-      {!visible.length && <p className="model-discovery-empty" role="status">{query.trim() ? label('没有匹配的模型', 'No matching models') : category === 'pending' && candidates.length ? label('该服务商的模型已全部添加', 'All provider models have been added') : label('暂无模型', 'No models')}</p>}
+      {!visible.length && <p className="model-discovery-empty" role="status">{query.trim() ? label('没有匹配的模型', 'No matching models') : category === 'pending' && candidates.length ? label('该服务商的模型已全部添加', 'All provider models have been added') : category === 'pending' ? label('没有发现新的模型，可直接填写模型 ID。', 'No new models found. Enter a model ID directly.') : label('暂无模型', 'No models')}</p>}
     </div>
     <small className="model-discovery-note">{label('按当前服务商区分已添加模型；添加后仍是草稿，保存后生效。需要重复实例时可手动填写模型 ID。', 'Status is scoped to this provider. Additions remain drafts until saved. Enter an ID manually to add another instance.')}</small>
   </section>

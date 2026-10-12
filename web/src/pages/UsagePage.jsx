@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { AlertTriangle, BarChart3, RefreshCw } from 'lucide-react'
 import { UsageRecords } from '../components/UsageRecords'
 import { api } from '../lib/api'
@@ -57,6 +57,29 @@ function heatmapModel(daily = [], lang, copy, weeks) {
   }) }
 }
 
+function Metric({ label, value, title, accent }) {
+  return <div className={`usage-metric${accent ? ' usage-metric-accent' : ''}`} title={title}><span>{label}</span><strong>{value}</strong></div>
+}
+
+function UsageHeatmap({ daily = [], lang, copy }) {
+  const { hint, months, weekdays, cells } = heatmapModel(daily, lang, copy, 26)
+  return <section className="usage-card usage-heatmap-card" aria-labelledby="usage-heatmap-title">
+    <div className="usage-section-head"><div><h2 id="usage-heatmap-title">{copy.heatmap}</h2><p>{hint}</p></div></div>
+    <div className="usage-heatmap-scroll">
+      <div className="usage-heatmap-frame">
+        <div className="usage-months" aria-hidden="true">{months.map(month => <span key={month.key} style={{ gridColumn: month.column }}>{month.label}</span>)}</div>
+        <div className="usage-heatmap-body">
+          <div className="usage-weekdays" aria-hidden="true">{weekdays.map(day => <span key={day}>{day}</span>)}</div>
+          <div className="usage-heatmap" role="img" aria-label={hint}>
+            {cells.map(day => <span key={day.date} className="usage-heat-cell" data-level={day.level} title={day.label} aria-label={day.label} />)}
+          </div>
+        </div>
+        <div className="usage-heat-legend"><span>{copy.less}</span>{[0, 1, 2, 3, 4].map(level => <i key={level} data-level={level} />)}<span>{copy.more}</span></div>
+      </div>
+    </div>
+  </section>
+}
+
 export function UsagePage({ lang = 'zh' }) {
   const c = COPY[lang] || COPY.zh
   const [data, setData] = useState(null)
@@ -68,19 +91,27 @@ export function UsagePage({ lang = 'zh' }) {
   const [recordPage, setRecordPage] = useState(1)
   const [recordPageSize, setRecordPageSize] = useState(20)
 
-  const lifecycle = useRef({ mounted: false, ticket: 0, pending: false })
+  const lifecycle = useRef({ mounted: false, ticket: 0 })
   const load = useCallback(async () => {
     const state = lifecycle.current
-    if (!state.mounted || state.pending) return
+    if (!state.mounted) return
     const ticket = ++state.ticket
-    state.pending = true
     setLoading(true); setError('')
-    try { setData(await api(`/api/usage/overview?${usageQueryString(recordFilters, recordPage, recordPageSize)}`)) }
-    catch (err) { setError(err instanceof Error ? err.message : String(err)) }
-    finally { setLoading(false) }
+    try {
+      const result = await api(`/api/usage/overview?${usageQueryString(recordFilters, recordPage, recordPageSize)}`)
+      if (state.mounted && ticket === state.ticket) setData(result)
+    } catch (err) {
+      if (state.mounted && ticket === state.ticket) setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      if (state.mounted && ticket === state.ticket) setLoading(false)
+    }
   }, [recordFilters, recordPage, recordPageSize])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    lifecycle.current.mounted = true
+    load()
+    return () => { lifecycle.current.mounted = false; lifecycle.current.ticket++ }
+  }, [load])
   const n = value => formatNumber(value, lang)
   const tok = value => formatTokens(value, lang)
   const queryRecords = (filters, page, pageSize) => {

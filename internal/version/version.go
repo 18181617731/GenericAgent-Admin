@@ -233,19 +233,21 @@ type DownloadProgress struct {
 }
 
 type UpdateStatus struct {
-	ID             string       `json:"id,omitempty"`
-	PID            int          `json:"pid,omitempty"`
-	Running        bool         `json:"running"`
-	Stage          string       `json:"stage"`
-	Progress       int          `json:"progress"`
-	Message        string       `json:"message"`
-	Error          string       `json:"error,omitempty"`
-	Script         string       `json:"script,omitempty"`
-	AppliedVersion string       `json:"applied_version,omitempty"`
-	Check          *CheckResult `json:"check,omitempty"`
-	StartedAt      time.Time    `json:"started_at,omitempty"`
-	UpdatedAt      time.Time    `json:"updated_at,omitempty"`
-	EndedAt        time.Time    `json:"ended_at,omitempty"`
+	ID             string            `json:"id,omitempty"`
+	PID            int               `json:"pid,omitempty"`
+	Running        bool              `json:"running"`
+	Stage          string            `json:"stage"`
+	Progress       int               `json:"progress"`
+	Download       *DownloadProgress `json:"download,omitempty"`
+	Log            string            `json:"log,omitempty"`
+	Message        string            `json:"message"`
+	Error          string            `json:"error,omitempty"`
+	Script         string            `json:"script,omitempty"`
+	AppliedVersion string            `json:"applied_version,omitempty"`
+	Check          *CheckResult      `json:"check,omitempty"`
+	StartedAt      time.Time         `json:"started_at,omitempty"`
+	UpdatedAt      time.Time         `json:"updated_at,omitempty"`
+	EndedAt        time.Time         `json:"ended_at,omitempty"`
 }
 
 var (
@@ -495,7 +497,7 @@ func StartApplyLatest() (UpdateStatus, error) {
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 		defer cancel()
-		res, err := applyLatest(ctx, func(stage, msg string, progress int, check *CheckResult) {
+		res, err := applyLatestWithTelemetry(ctx, func(stage, msg string, progress int, check *CheckResult, transfer *DownloadProgress) {
 			if progress < 0 {
 				progress = 0
 			}
@@ -503,6 +505,7 @@ func StartApplyLatest() (UpdateStatus, error) {
 				progress = 100
 			}
 			st.Stage, st.Message, st.Progress = stage, msg, progress
+			st.Download = transfer
 			if check != nil {
 				st.Check = check
 			}
@@ -675,6 +678,14 @@ func ApplyLatest(ctx context.Context) (ApplyResult, error) {
 }
 
 func applyLatest(ctx context.Context, progress func(stage, msg string, pct int, check *CheckResult)) (ApplyResult, error) {
+	return applyLatestWithTelemetry(ctx, func(stage, msg string, pct int, check *CheckResult, _ *DownloadProgress) {
+		if progress != nil {
+			progress(stage, msg, pct, check)
+		}
+	})
+}
+
+func applyLatestWithTelemetry(ctx context.Context, progress func(stage, msg string, pct int, check *CheckResult, transfer *DownloadProgress)) (ApplyResult, error) {
 	emit := func(stage, msg string, pct int, check *CheckResult) {
 		if progress != nil {
 			progress(stage, msg, pct, check, nil)
@@ -712,22 +723,21 @@ func applyLatest(ctx context.Context, progress func(stage, msg string, pct int, 
 	emit("downloading", "正在下载升级包", downloadProgressStart, &check)
 	downloadSource := "GitHub 直连"
 	if hasAssetDigest {
-		lastSource := ""
-		lastProgress := downloadProgressStart - 1
-		downloadSource, err = downloadReleaseAssetWithProgress(ctx, check.Asset.BrowserDownloadURL, zipPath, maxUpdatePackageBytes,
-			func(source string, downloaded, total int64) {
-				pct := downloadProgressPercent(downloaded, total, check.Asset.Size)
-				if pct < lastProgress {
-					pct = lastProgress
+		downloadSource, err = downloadReleaseAssetWithTelemetry(ctx, downloadTelemetryRequest{URL: check.Asset.BrowserDownloadURL, Dest: zipPath, MaxBytes: maxUpdatePackageBytes, ExpectedBytes: check.Asset.Size},
+			func(source string, transfer DownloadProgress) {
+				transfer.Name = check.Asset.Name
+				if progress != nil {
+					pct := downloadProgressPercent(transfer.DownloadedBytes, transfer.TotalBytes, check.Asset.Size)
+					progress("downloading", "正在通过"+source+"下载升级包", pct, &check, &transfer)
 				}
-				if source == lastSource && pct <= lastProgress {
-					return
-				}
-				lastSource, lastProgress = source, pct
-				emit("downloading", "正在通过"+source+"下载升级包", pct, &check)
 			})
 	} else {
-		err = download(ctx, check.Asset.BrowserDownloadURL, zipPath, maxUpdatePackageBytes)
+		err = downloadWithProgress(ctx, check.Asset.BrowserDownloadURL, zipPath, maxUpdatePackageBytes, check.Asset.Size, func(transfer DownloadProgress) {
+			transfer.Name = check.Asset.Name
+			if progress != nil {
+				progress("downloading", "正在下载升级包", downloadProgressPercent(transfer.DownloadedBytes, transfer.TotalBytes, check.Asset.Size), &check, &transfer)
+			}
+		})
 	}
 	if err != nil {
 		return ApplyResult{}, err
@@ -739,7 +749,12 @@ func applyLatest(ctx context.Context, progress func(stage, msg string, pct int, 
 	if !hasAssetDigest {
 		sumPath = filepath.Join(work, check.Checksum.Name)
 		emit("downloading_checksum", "正在下载校验文件", 55, &check)
-		if err := download(ctx, check.Checksum.BrowserDownloadURL, sumPath, maxUpdateChecksumBytes); err != nil {
+		if err := downloadWithProgress(ctx, check.Checksum.BrowserDownloadURL, sumPath, maxUpdateChecksumBytes, check.Checksum.Size, func(transfer DownloadProgress) {
+			transfer.Name = check.Checksum.Name
+			if progress != nil {
+				progress("downloading_checksum", "正在下载校验文件", 55, &check, &transfer)
+			}
+		}); err != nil {
 			return ApplyResult{}, err
 		}
 	}

@@ -165,5 +165,12 @@ export const withUpstreamI18n = local => {
   }
   merged.zh.models = mergeLocalValues(FAILOVER_I18N_LEGACY.zh, merged.zh.models)
   merged.en.models = mergeLocalValues(FAILOVER_I18N_LEGACY.en, merged.en.models)
+  merged.zh.models.fetchModels = '从服务商获取'
+  merged.zh.models.modelIdPlaceholder = '例如：gpt-5.2'
+  merged.zh.models.modelIdHelp = '这是发送到服务商 API 的模型 ID，不是上方的自定义显示名称。'
+  merged.zh.models.pageHasErrors = '有服务商存在阻断项，在下方“服务商连接”中打开并修复。'
+  merged.en.models.fetchModels = 'Fetch from provider'
+  merged.en.models.modelIdPlaceholder = 'For example: gpt-5.2'
+  merged.en.models.modelIdHelp = 'This is the model ID sent to the provider API, not the custom display name above.'
   return merged
 }

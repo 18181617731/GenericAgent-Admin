@@ -8,6 +8,7 @@ import ChatApp, { ChatMessage, GoalStatusCard, PlanTodoCard, ProviderModelCascad
 import { GoalsPage } from './pages/GoalsPage.jsx'
 import { Models } from './pages/ModelsPage.jsx'
 import { draftChangeSummary } from './lib/modelsEditor.js'
+import { groupRuntimeModels } from './components/ModelProviderCascade.jsx'
 import { FilesPage } from './pages/FilesPage.jsx'
 import { SettingsPage } from './pages/SettingsPage.jsx'
 import { UsagePage } from './pages/UsagePage.jsx'
@@ -66,6 +67,7 @@ const jsonResponse = (body) => ({
   ok: true,
   status: 200,
   statusText: 'OK',
+  headers: new Headers(),
   text: async () => JSON.stringify(body),
   json: async () => body,
 })
@@ -664,14 +666,16 @@ function ModelsHarness({
   initialProfile = validModelProfile,
   discoverModels = vi.fn(async () => ({ models: [] })),
   initialFailoverGroups = [],
+  failoverGroups: failoverGroupsProp,
   saveState = {},
   saveAll = vi.fn(async () => true),
   discardDraft = vi.fn(),
 }) {
   const persisted = React.useRef([{ ...initialProfile, client_id: 'profile-key' }])
-  const persistedGroups = React.useRef(initialFailoverGroups)
+  const seededFailoverGroups = failoverGroupsProp ?? initialFailoverGroups
+  const persistedGroups = React.useRef(seededFailoverGroups)
   const [profiles, setProfiles] = React.useState(persisted.current)
-  const [failoverGroups, setFailoverGroups] = React.useState(initialFailoverGroups)
+  const [failoverGroups, setFailoverGroups] = React.useState(seededFailoverGroups)
   // Mirrors the hook: the saved name has to survive a rename so that the
   // change count reports one edit rather than an add plus a removal.
   const patchProfile = (idx, patch) => {
@@ -933,7 +937,7 @@ describe('Models call list', () => {
     })
   })
 
-  test('shows invalid provider errors and the API key warning in its drawer', () => {
+  test('shows invalid provider errors and the API key warning in its drawer', async () => {
     installBrowserPolyfills()
     render(<ModelsHarness initialProfile={{ ...validModelProfile, var_name: '', apibase: '', apikey: '' }} />)
     await waitFor(() => expect(document.querySelector('.model-provider-nav-select')).toBeTruthy())
@@ -3162,6 +3166,7 @@ describe('chat worldline controls', () => {
   })
 
   test('activates the current session before loading worldline state', async () => {
+    installStableChatPolyfills()
     const sessions = [{ id: 'worldline-session', title: 'Worldline chat', count: 2, updated_at: '2026-08-05T10:00:00Z' }]
     globalThis.fetch = vi.fn(async url => {
       const path = String(url)

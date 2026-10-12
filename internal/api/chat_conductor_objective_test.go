@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestConductorObjectiveLengthRejectsWithoutMutation(t *testing.T) {
@@ -53,15 +54,39 @@ func TestConductorObjectiveLengthRejectsWithoutMutation(t *testing.T) {
 			t.Fatal("rejected event mutated parent")
 		}
 	}
-	if s.beginChatRun("objective-parent") == nil {
+	assertConductorObjectiveBoundary(t, s)
+}
+
+func assertConductorObjectiveBoundary(t *testing.T, s *Server) {
+	t.Helper()
+	const parentID = "objective-parent"
+	var workerID string
+	t.Cleanup(func() {
+		if workerID != "" {
+			cleanupChatLoopTestWorker(t, s, workerID)
+		}
+		cleanupChatLoopTestWorker(t, s, parentID)
+	})
+	blockChatLoopTestWorker(t, s, parentID)
+	token := s.beginChatRun(parentID)
+	if token == nil {
 		t.Fatal("parent run not started")
 	}
+	defer s.endChatRunOwned(parentID, token)
 	objective := strings.Repeat("界", 4095) + "!"
-	child, err := s.dispatchConductor("objective-parent", "  "+objective+"  ", "")
+	child, err := s.dispatchConductor(parentID, "  "+objective+"  ", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if child.Objective != objective {
 		t.Fatal("boundary objective or trailing constraint changed")
+	}
+	workerID = child.SessionID
+	deadline := time.Now().Add(2 * time.Second)
+	for !s.chatRunActive(workerID) && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !s.chatRunActive(workerID) {
+		t.Fatal("accepted boundary objective did not start its worker")
 	}
 }

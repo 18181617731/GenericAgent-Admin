@@ -71,9 +71,14 @@ import { lastUserMessageID, nextActiveSession } from './lib/chatSessionActions.j
 import { primeChatCompletionTone } from './lib/chatCompletionTone.js'
 import { buildChatNotification, latestUserPrompt } from './lib/chatNotification.js'
 import { publishNotification } from './lib/notifications.js'
+import { createThreadFollowScheduler } from './lib/chatFollowScheduler.js'
+import { COMPOSER_MOBILE_BREAKPOINT, composerTextareaLayout, composerDragHeight } from './lib/composerHeight.js'
+import { createChatSessionListReader } from './lib/chatSessionListReader.js'
 import { NotificationCenter } from './components/NotificationUI.jsx'
 import SessionSearchDialog from './components/SessionSearchDialog.jsx'
 import ChatSidebar, { ProjectManagerDialog } from './components/ChatSidebar.jsx'
+import { sortSidebarSessions } from './lib/chatSidebarPreferences.js'
+import { useSidebarPreferences } from './hooks/useSidebarPreferences.js'
 import ChatPrivacyCurtain from './components/ChatPrivacyCurtain.jsx'
 import { privateSessionTitle } from './lib/chatPrivacy.js'
 import { useChatPrivacyMode } from './hooks/useChatPrivacyMode.js'
@@ -3488,18 +3493,144 @@ export const ChatMessage = memo(function ChatMessage({ message: m, models = [], 
   </article>
 })
 
-const MessageList = memo(function MessageList({ messages, models, isCurrentRunning, onAskReply, onQuickReply, onEditResend, onRetry, clockNow, worldline, onSwitchVersion, chatInstanceID = '', conductorDetail = null }) {
-  return <>
-    {messages.flatMap((m, i) => {
-      const day = timelineKey(m.created_at)
-      const prevDay = i > 0 ? timelineKey(messages[i - 1]?.created_at) : ''
-      const nodes = []
-      if (i === 0 || day !== prevDay) nodes.push(<div key={`tl-${day}-${i}`} className="oa-timeline"><span>{fmtTimelineDate(m.created_at)}</span></div>)
-      const retrySource = m.error && i > 0 && messages[i - 1]?.role === 'user' ? messages[i - 1] : null
-      nodes.push(<ChatMessage key={m.id} message={m} models={models} conductorWorker={conductorDetail?.conductor?.role === 'worker'} pending={isCurrentRunning && i === messages.length - 1} onAskReply={onAskReply} onEditResend={onEditResend} onRetry={retrySource ? () => onRetry?.(retrySource) : undefined} editDisabled={isCurrentRunning} clockNow={clockNow} version={messageVersionInfo(worldline, m.id)} onSwitchVersion={onSwitchVersion} switchingNodeId={worldline?.switchingNodeId} chatInstanceID={chatInstanceID} />)
-      return nodes
+const MESSAGE_RENDER_TAIL = 2
+const MESSAGE_RENDER_LIMIT = 12
+const MESSAGE_HEIGHT_CACHE_LIMIT = 160
+const messageHeightCache = new Map()
+
+function messageRenderKey(message) {
+  return String(message?.render_key || message?.id || '')
+}
+
+function estimatedMessageHeight(message, showTimeline, showVersions) {
+  const chars = String(message?.content || '').length
+  const base = message?.role === 'user' ? 72 : 96
+  return Math.min(1200, base + Math.ceil(chars / 90) * 24 + (showTimeline ? 38 : 0) + (showVersions ? 32 : 0))
+}
+
+const fmtDate = value => fmtTimelineDate(value)
+
+function rememberMessageHeight(cacheKey, height) {
+  if (!cacheKey || !Number.isFinite(height) || height <= 0) return
+  messageHeightCache.delete(cacheKey)
+  messageHeightCache.set(cacheKey, Math.ceil(height))
+  while (messageHeightCache.size > MESSAGE_HEIGHT_CACHE_LIMIT) messageHeightCache.delete(messageHeightCache.keys().next().value)
+}
+
+const VirtualMessageSlot = memo(function VirtualMessageSlot({ active, cacheKey, estimatedHeight, messageID, messageKey, children }) {
+  const slotRef = useRef(null)
+  useLayoutEffect(() => {
+    if (!active || !slotRef.current) return undefined
+    const slot = slotRef.current
+    const measure = () => rememberMessageHeight(cacheKey, slot.getBoundingClientRect().height)
+    measure()
+    if (typeof ResizeObserver !== 'function') return undefined
+    const observer = new ResizeObserver(measure)
+    observer.observe(slot)
+    return () => observer.disconnect()
+  }, [active, cacheKey])
+  const height = messageHeightCache.get(cacheKey) || estimatedHeight
+  return <div ref={slotRef} className={`oa-message-slot ${active ? 'is-active' : 'is-placeholder'}`} data-message-id={messageID} data-message-key={messageKey} style={active ? undefined : { height }} aria-hidden={active ? undefined : 'true'}>{active ? children : null}</div>
+})
+
+function MessageListContent({ messages, models = [], isCurrentRunning, onAskReply, onQuickReply, onEditResend, onRetry, clockNow, worldline, onSwitchVersion, conductorDetail, sessionKey, chatInstanceID = '' }) {
+  const rootRef = useRef(null)
+  const threadMessages = useMemo(() => messages.filter(message => message.kind !== 'btw'), [messages])
+  const lastMessageId = threadMessages.at(-1)?.id
+  const messageKeysJSON = JSON.stringify(threadMessages.map(messageRenderKey))
+  const messageKeys = useMemo(() => JSON.parse(messageKeysJSON), [messageKeysJSON])
+  const tailKeys = useMemo(() => new Set(messageKeys.slice(-MESSAGE_RENDER_TAIL)), [messageKeys])
+  const [activeKeys, setActiveKeys] = useState(() => new Set(tailKeys))
+  const visibleKeysRef = useRef(new Set())
+  const queueRef = useRef([])
+  const frameRef = useRef(0)
+
+  const activateKey = useCallback(key => {
+    setActiveKeys(current => {
+      const next = new Set(current)
+      if (key) next.add(key)
+      if (next.size > MESSAGE_RENDER_LIMIT) {
+        for (const victim of next) {
+          if (next.size <= MESSAGE_RENDER_LIMIT) break
+          if (!tailKeys.has(victim) && !visibleKeysRef.current.has(victim)) next.delete(victim)
+        }
+      }
+      return next.size === current.size && [...next].every(item => current.has(item)) ? current : next
+    })
+  }, [tailKeys])
+
+  useEffect(() => {
+    const available = new Set(messageKeys)
+    setActiveKeys(current => {
+      const next = new Set([...current].filter(key => available.has(key)))
+      tailKeys.forEach(key => next.add(key))
+      return next.size === current.size && [...next].every(key => current.has(key)) ? current : next
+    })
+  }, [messageKeys, tailKeys])
+
+  useEffect(() => {
+    const root = rootRef.current
+    if (!root || typeof IntersectionObserver !== 'function') {
+      setActiveKeys(current => new Set(messageKeys))
+      return undefined
+    }
+    const activateNext = () => {
+      frameRef.current = 0
+      const key = queueRef.current.shift()
+      if (!key) return
+      if (visibleKeysRef.current.has(key)) activateKey(key)
+      if (queueRef.current.length) frameRef.current = requestAnimationFrame(activateNext)
+    }
+    const observer = new IntersectionObserver(entries => {
+      for (const entry of entries) {
+        const key = entry.target.dataset.messageKey
+        if (!key) continue
+        if (entry.isIntersecting) {
+          visibleKeysRef.current.add(key)
+          if (!queueRef.current.includes(key)) queueRef.current.push(key)
+        } else {
+          visibleKeysRef.current.delete(key)
+          queueRef.current = queueRef.current.filter(item => item !== key)
+        }
+      }
+      if (queueRef.current.length && !frameRef.current) frameRef.current = requestAnimationFrame(activateNext)
+    }, { root: root.closest('.oa-thread'), rootMargin: '0px' })
+    root.querySelectorAll('.oa-message-slot').forEach(node => observer.observe(node))
+    return () => {
+      observer.disconnect()
+      if (frameRef.current) cancelAnimationFrame(frameRef.current)
+      frameRef.current = 0
+      queueRef.current = []
+      visibleKeysRef.current.clear()
+    }
+  }, [activateKey, sessionKey, messageKeys])
+
+  return <div ref={rootRef} className="oa-message-list">
+    {threadMessages.map((m, i) => {
+      const key = messageRenderKey(m)
+      const dateKey = fmtDate(m.created_at)
+      const prevDate = i > 0 ? fmtDate(threadMessages[i - 1]?.created_at) : ''
+      const showTimeline = i === 0 || dateKey !== prevDate
+      const versionInfo = m.role === 'user' && onSwitchVersion ? messageVersionInfo(worldline, m.id) : null
+      const showVersions = Boolean(versionInfo && versionInfo.total > 1)
+      const pending = !m.kind && isCurrentRunning && m.id === lastMessageId
+      const retrySource = m.error && i > 0 && threadMessages[i - 1]?.role === 'user' ? threadMessages[i - 1] : null
+      const cacheKey = `${sessionKey}:${key}`
+      return <VirtualMessageSlot key={key} active={activeKeys.has(key)} cacheKey={cacheKey} estimatedHeight={estimatedMessageHeight(m, showTimeline, showVersions)} messageID={m.id} messageKey={key}>
+        {showTimeline && <div className="oa-timeline"><span>{dateKey}</span></div>}
+        <ChatMessage message={m} models={models} conductorWorker={conductorDetail?.conductor?.role === 'worker'} pending={pending} onAskReply={onAskReply} onQuickReply={onQuickReply} onEditResend={onEditResend} onRetry={retrySource ? () => onRetry?.(retrySource) : undefined} editDisabled={isCurrentRunning} clockNow={clockNow} version={versionInfo} onSwitchVersion={onSwitchVersion} switchingNodeId={worldline?.switchingNodeId} chatInstanceID={chatInstanceID} />
+        {showVersions && <div className="oa-msg-versions">
+          <button type="button" disabled={isCurrentRunning || !versionInfo.previous_node_id} onClick={() => onSwitchVersion(versionInfo.previous_node_id)} title="上一个版本" aria-label="上一个版本"><ChevronLeft size={13}/></button>
+          <em>{versionInfo.index}/{versionInfo.total}</em>
+          <button type="button" disabled={isCurrentRunning || !versionInfo.next_node_id} onClick={() => onSwitchVersion(versionInfo.next_node_id)} title="下一个版本" aria-label="下一个版本"><ChevronRight size={13}/></button>
+        </div>}
+      </VirtualMessageSlot>
     })}
-  </>
+  </div>
+}
+
+export const MessageList = memo(function MessageList({ messages, models, isCurrentRunning, onAskReply, onQuickReply, onEditResend, onRetry, clockNow, worldline, onSwitchVersion, chatInstanceID = '', conductorDetail = null }) {
+  return <MessageListContent key={chatInstanceID} messages={messages} models={models} isCurrentRunning={isCurrentRunning} onAskReply={onAskReply} onQuickReply={onQuickReply} onEditResend={onEditResend} onRetry={onRetry} clockNow={clockNow} worldline={worldline} onSwitchVersion={onSwitchVersion} conductorDetail={conductorDetail} sessionKey={chatInstanceID} chatInstanceID={chatInstanceID}/>
 })
 
 export function ComposerActions({ onAttach, onCommands, onSystemPrompt, onKeychain, onAutorun, onLoop, onConductor, conductorActive, conductorDisabled, commandsOpen, keychainOpen, systemPromptActive, systemPromptLabel, autorunEnabled, loopOpen, triggerRef }) {
@@ -3818,6 +3949,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const [projects, setProjects] = useState([])
   const [pinnedProjects, setPinnedProjects] = useState([])
   const [projectOrder, setProjectOrder] = useState([])
+  const { preferences: sidebarPreferences, error: sidebarPreferencesError } = useSidebarPreferences()
   const [projectOrderSaving, setProjectOrderSaving] = useState(false)
   const [projectSortMode, setProjectSortMode] = useState(false)
   const [sidebarTab, setSidebarTab] = useState('history')
@@ -4010,6 +4142,12 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     }
     return result
   }, [])
+  const [sessionListReader] = useState(createChatSessionListReader)
+  const loadSessionList = useCallback((fresh = false) => sessionListReader.load(
+    addChatInstanceToURL('/api/chat/sessions', chatInstanceRef.current),
+    { fresh, fetcher: chatFetch },
+  ), [chatFetch, sessionListReader])
+  useEffect(() => { sessionListReader.clear() }, [chatInstanceID, sessionListReader])
   const runSeqRef = useRef(0)
   const activeRunRef = useRef(false)
   const queueWriteRef = useRef(Promise.resolve())
@@ -4175,8 +4313,47 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     setArchiveUndo(null)
     if (noticeText) setNotice(noticeText)
   }
-  // Auto-grow composer textarea to fit content (clamped), reset to single row when cleared.
-  const COMPOSER_MAX_H = 160
+  const [followScheduler] = useState(() => createThreadFollowScheduler({
+    getThread: () => threadRef.current,
+    isFollowing: () => autoFollowRef.current,
+    onScroll: thread => { previousScrollTopRef.current = thread.scrollTop },
+    schedule: callback => window.requestAnimationFrame(callback),
+    cancel: handle => window.cancelAnimationFrame(handle),
+  }))
+  useLayoutEffect(() => () => followScheduler.cancel(), [followScheduler, sid])
+  const applyComposerHeight = useCallback(() => {
+    const el = promptRef.current
+    if (!el) return
+    const isNarrow = window.innerWidth <= COMPOSER_MOBILE_BREAKPOINT
+    if (!composerManualHeightRef.current || isNarrow) el.style.height = 'auto'
+    const layout = composerTextareaLayout({ scrollHeight: el.scrollHeight, manualHeight: composerManualHeightRef.current, viewportHeight: window.innerHeight, isNarrow })
+    el.style.height = `${layout.height}px`
+    el.style.overflowY = layout.overflowY
+    const wrap = composerWrapRef.current
+    const root = chatScope.current
+    if (wrap && root) {
+      root.style.setProperty('--oa-composer-h', `${Math.ceil(wrap.getBoundingClientRect().height)}px`)
+      if (autoFollowRef.current) followScheduler.request('auto')
+    }
+  }, [followScheduler])
+  const beginComposerResize = useCallback(event => {
+    const el = promptRef.current
+    if (!el || event.button !== 0 || window.innerWidth <= COMPOSER_MOBILE_BREAKPOINT) return
+    event.preventDefault()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    composerResizePointerRef.current = { pointerId: event.pointerId, startHeight: el.getBoundingClientRect().height, startY: event.clientY }
+  }, [])
+  const moveComposerResize = useCallback(event => {
+    const started = composerResizePointerRef.current
+    if (!started || event.pointerId !== started.pointerId) return
+    composerManualHeightRef.current = composerDragHeight(started.startHeight, started.startY, event.clientY, window.innerHeight)
+    applyComposerHeight()
+  }, [applyComposerHeight])
+  const finishComposerResize = useCallback(() => { composerResizePointerRef.current = null }, [])
+  useEffect(() => {
+    window.addEventListener('resize', applyComposerHeight)
+    return () => window.removeEventListener('resize', applyComposerHeight)
+  }, [applyComposerHeight])
 
   useEffect(() => {
     if (!busy && !streamingSid) return undefined
@@ -4720,6 +4897,8 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
 
   const attachRunningStream = async (id, { waitForRun = false, clientUserID = '' } = {}) => {
     if (!id) return
+    const openToken = openSeqRef.current
+    const isCurrent = () => openToken === openSeqRef.current && isActiveSession(id)
     streamAbortRef.current?.abort?.()
     const ctrl = new AbortController()
     streamAbortRef.current = ctrl
@@ -4753,8 +4932,14 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
         const list = await loadSessions(id)
         // The terminal event updates the body, but read receipts also need the
         // persisted result and content revision from the final page snapshot.
-        await refreshCompletedRun(id, openToken, isCurrent)
+        const snapshot = await chatApi(`/api/chat/session/${id}`)
         if (!isCurrent()) return
+        setActiveSessionDetail(snapshot)
+        setMessages(snapshot.messages || [])
+        setRawHistory(Array.isArray(snapshot.raw_history) ? snapshot.raw_history : [])
+        setHistoryInfo(Array.isArray(snapshot.history_info) ? snapshot.history_info : [])
+        setWorkingState(snapshot.working || null)
+        setPlanState(snapshot.plan || null)
         const currentSession = list.find(session => session.id === id)
         sessionForNotification = currentSession
         if (shouldPollGeneratedTitle(currentSession)) {
@@ -5035,7 +5220,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
 
   const loadSessions = async (prefer = sid, options = {}) => {
     const { open = false, isCurrent = () => true } = options
-    const d = await chatApi('/api/chat/sessions')
+    const d = await loadSessionList(true)
     if (!isCurrent()) return []
     const list = mergeChatSessionDraftSessions(d.sessions, chatInstanceRef.current)
     setSessions(list)
@@ -5207,7 +5392,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     }
   }
   const openProjectDraft = () => {
-    setProjectsExpanded(true)
+    setSidebarTab('projects')
     setProjectDraftName('')
     setProjectDraftOpen(true)
   }
@@ -6883,7 +7068,10 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     if (lastMessage) gsap.from(lastMessage, { y: 14, autoAlpha: 0, duration: 0.32, ease: 'power2.out', clearProps: 'transform,opacity,visibility' })
   }, { scope: chatScope, dependencies: [messages.length] })
 
-  const projectSessionGroups = useMemo(() => groupProjectSessions(projects, sessions, pinnedProjects, projectOrder), [projects, sessions, pinnedProjects, projectOrder])
+  const sortedSidebarSessions = useMemo(() => sortSidebarSessions(sessions, sidebarPreferences.sort), [sessions, sidebarPreferences.sort])
+  const projectSessionGroups = useMemo(() => groupProjectSessions(projects, sortedSidebarSessions, pinnedProjects, projectOrder), [projects, sortedSidebarSessions, pinnedProjects, projectOrder])
+  const waitingSessionIds = new Set(sessions.filter(session => session.taskbar_state === 'waiting').map(session => session.id))
+  const runningProjects = runningProjectKeys(sessions, waitingSessionIds)
   const sessionSearchScopes = sessionSearchScopeOptions(chatLanguage())
   const recentSearchSessions = sessions.slice(0, 8)
   const filteredSessions = useMemo(() => {
@@ -7040,6 +7228,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       onDeleteProject={deleteProject}
       sessions={sessions}
       projectGroups={filteredProjectGroups}
+      runningProjects={runningProjects}
       recentGroups={recentSessionGroups}
       recentGroupLabels={recentGroupLabels}
       sidebarSearch={sidebarSearch}
@@ -7320,6 +7509,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
               </div>
             </div>
           })}
+          </div>
         </div>)}
         {!privacyMode && cmdDrawer.open && <div className="oa-cmd-drawer" ref={cmdDrawerRef}>
           {filteredCmds.length === 0 && <div className="oa-cmd-item" style={{color:'var(--text-secondary)',justifyContent:'center',cursor:'default',padding:'12px 14px'}}>{ct('无匹配命令', 'No matching commands')}</div>}
@@ -7464,6 +7654,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
             </details>}
           </div>}
           {isUltraPlanPrompt && <div className="oa-ultraplan-mode" aria-live="polite"><span><Sparkles size={14}/>UltraPlan</span><b>\u5c06\u4ee5\u89c4\u5212\u6a21\u5f0f\u6267\u884c\uff0c\u5e76\u5728\u5b8c\u6210\u540e\u5c55\u793a run \u76ee\u5f55\u4e0e\u65e5\u5fd7\u6458\u8981</b></div>}
+          <button type="button" className="oa-composer-resize" aria-label={ct('调整输入区高度', 'Resize message input')} onPointerDown={beginComposerResize} onPointerMove={moveComposerResize} onPointerUp={finishComposerResize} onPointerCancel={finishComposerResize} onLostPointerCapture={finishComposerResize}/>
           <textarea ref={promptRef} value={prompt} onPaste={onPaste} onChange={handlePromptChange} onKeyDown={handlePromptKeyDown} placeholder={isMobile ? '发送消息或添加文件…' : '\u5411 GenericAgent \u53d1\u9001\u6d88\u606f\uff0c\u53ef\u9009\u62e9/\u7c98\u8d34/\u62d6\u62fd\u4efb\u610f\u6587\u4ef6\u2026'} rows={1}/>
           <div className="oa-composer-bar">
             <button className="oa-attach-btn" type="button" onClick={()=>fileRef.current?.click()} title={ct('添加附件', 'Add attachment')}><Paperclip size={17}/><span>{ct('附件', 'Attachments')}</span></button>

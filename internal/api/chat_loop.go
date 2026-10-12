@@ -721,13 +721,12 @@ func (s *Server) saveChatLoopRun(req chatLoopRunRequest, token *chatRun, userMsg
 	var cs chatSession
 	var terminalLoop *chatLoopState
 	owned, saveErr := s.saveChatRunPending(req.sid, token, pendingMsg.ID, startedAtMS, func() error {
-		s.SessionMu.Lock()
-		defer s.SessionMu.Unlock()
+		// saveChatRunPending 已按 SessionMu -> ChatMu 顺序持锁。
 		latest, err := loadChatSession(s.CfgStore.Snapshot(), req.sid)
 		if err != nil {
 			return err
 		}
-		if !latest.Loop.Enabled || latest.Loop.Epoch != req.epoch || latest.Loop.Status != req.expectedStatus {
+		if conductorParentPaused(latest) || !latest.Loop.Enabled || latest.Loop.Epoch != req.epoch || latest.Loop.Status != req.expectedStatus {
 			return errChatLoopStale
 		}
 		if chatLoopHasPendingConductorWork(latest) {

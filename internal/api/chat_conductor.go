@@ -954,7 +954,8 @@ func (s *Server) finishConductorChild(parentID, dispatchID, status, result, reas
     s.publishChatRun(parentID, map[string]interface{}{"type": "conductor_child", "child": event})
     s.writeConductorOutcome(parentID, event)
     s.scheduleConductorChildren(parentID)
-    if workerValid && status != conductorCancelled && !s.chatRunCanceled(parentID) {
+    // 新 run 的预约会拒绝尚未结束的取消握手；已结束 run 的取消标记不能阻止迟到结果。
+    if workerValid && status != conductorCancelled {
         go s.processNextQueuedMessage(parentID)
     }
 }

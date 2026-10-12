@@ -10,20 +10,21 @@ import tempfile
 import types
 import unittest
 from unittest.mock import patch
+from conductor_loop_test_support import explicit_loop_path, loop_source
 
-LOOP_PATH = Path(sys.argv.pop(1)) if len(sys.argv) > 1 else None
+LOOP_PATH = explicit_loop_path(sys.argv)
 
 
 class InstallationTest(unittest.TestCase):
     def test_real_install_dispatch_and_model_continuation(self):
-        self.assertIsNotNone(LOOP_PATH, 'Pass the read-only GA agent_loop.py path')
+        source, source_name = loop_source(LOOP_PATH)
         loop = types.ModuleType('agent_loop')
         hooks = types.ModuleType('plugins.hooks')
         hooks.trigger = lambda *args, **kwargs: None
         fake = types.ModuleType('agentmain')
         with patch.dict(sys.modules, {'agent_loop': loop, 'agentmain': fake,
                                      'plugins.hooks': hooks}):
-            exec(compile(LOOP_PATH.read_text(encoding='utf-8'), str(LOOP_PATH), 'exec'), loop.__dict__)
+            exec(compile(source, source_name, 'exec'), loop.__dict__)
 
             class Handler(loop.BaseHandler):
                 def __init__(self):

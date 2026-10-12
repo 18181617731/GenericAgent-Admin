@@ -271,6 +271,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/api/channels", s.requireDangerousConfirm(s.channels))
 	mux.HandleFunc("/api/usage/overview", s.usageOverview)
 	mux.HandleFunc("/api/usage/export", s.usageExport)
+	mux.HandleFunc("/api/chat/sidebar-preferences", s.chatSidebarPreferences)
 	mux.HandleFunc("/api/chat/search", s.withChatInstance((*Server).chatSearch))
 	mux.HandleFunc("/api/chat/sessions", s.withChatInstance((*Server).chatSessions))
 	mux.HandleFunc("/api/chat/python/install-deps", s.requireDangerousConfirm(s.withChatInstance((*Server).chatPythonInstallDeps)))

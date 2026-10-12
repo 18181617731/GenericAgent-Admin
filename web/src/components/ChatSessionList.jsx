@@ -27,6 +27,7 @@ export default function ChatSessionList({
   tab = 'history',
   recentGroups = [],
   projectGroups = [],
+  runningProjects = EMPTY_SET,
   recentGroupLabels = {},
   sidebarSearch = '',
   expandedProjectNames = EMPTY_SET,
@@ -93,6 +94,7 @@ export default function ChatSessionList({
             <ChevronRight size={13} className="oa-project-chevron" aria-hidden="true"/><b title={displayName}>{displayName}</b><small>{group.sessions.length}</small>
           </button>
           {group.pinned && <span className="oa-project-pinned-badge" title={ct('项目已置顶', 'Project pinned')}><Pin size={11} aria-hidden="true"/>{ct('置顶', 'Pinned')}</span>}
+          {runningProjects.has(projectKey) && <span className="oa-project-running" role="img" aria-label={ct('项目运行中', 'Project running')} title={ct('项目运行中', 'Project running')}><span className="oa-session-running-wave" aria-hidden="true"><i/><i/><i/><i/></span></span>}
           {projectSortMode && (
             <ProjectDragHandle name={projectKey} groups={projectSessionGroups.length ? projectSessionGroups : projectGroups} disabled={batchDeleting || projectOrderSaving} onReorder={onProjectOrder} label={reorderLabel}/>
           )}

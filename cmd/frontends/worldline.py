@@ -224,6 +224,12 @@ class RewindStore:
         return nid
 
     # ------------------------------------------------------------- navigation
+    def path_has_wm(self, node_id) -> bool:
+        """识别带工作记忆的路径，兼容旧节点的空元数据。"""
+        return any(isinstance(self.nodes[nid].get("hist_info"), list) or
+                   isinstance(self.nodes[nid].get("key_info"), str)
+                   for nid in self.path_to(node_id))
+
     def rewind_head(self, node_id) -> None:
         """移动 HEAD(不动文件)。从非叶 HEAD 下次 commit 即 append 子节点 = fork。
         node_id=None 表示「回到根之前」(空起点),下次 commit 产生新的顶层节点。"""
@@ -978,8 +984,8 @@ def restore_plan(store, node_id, mode: str = "both", to: str = "before",
 
     logical_target = target
     target_node = store.nodes[logical_target]
-    hist_info = target_node.get("hist_info")
-    key_info = target_node.get("key_info")
+    hist_info = target_node.get("hist_info") if mode in ("both", "conv") else None
+    key_info = target_node.get("key_info") if mode in ("both", "conv") else None
     history = None
     if mode in ("both", "conv"):
         history = store.rebuild_history(logical_target)

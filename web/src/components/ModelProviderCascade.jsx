@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef,
 import { createPortal } from 'react-dom'
 import { Check, ChevronDown, ChevronRight, Search, X } from 'lucide-react'
 import { modelLabel } from '../lib/format'
-import { orderedRuntimeModels } from '../lib/modelDefaults.js'
 import { filterModelProviderGroups, modelGroupStats } from '../lib/ux'
 
 const DEFAULT_PROVIDER_VALUE = '__ga_default_provider__'
@@ -28,15 +27,26 @@ export const runtimeModelLabel = model => {
   return label.includes('/') ? label.split('/').pop() : label
 }
 
-export function buildModelProviderGroups(models = [], options = {}) {
-  const { defaultLabel = '', defaultProviderLabel = '默认' } = options
+export function groupRuntimeModels(models = []) {
   const groups = new Map()
-  orderedRuntimeModels(models).forEach(model => {
+  const ranks = new Map()
+  models.forEach(model => {
+    if (model?.index === undefined || model?.index === null) return
     const provider = modelProvider(model)
     if (!groups.has(provider)) groups.set(provider, [])
     groups.get(provider).push({ value: model.index, label: runtimeModelLabel(model) })
+    if (Number.isFinite(model.provider_sort_order)) ranks.set(provider, model.provider_sort_order)
   })
-  const result = Array.from(groups, ([provider, providerModels]) => ({ value: provider, label: provider, models: providerModels }))
+  const result = Array.from(groups, ([provider, providerModels]) => ({ value: `provider:${provider}`, label: provider, models: providerModels }))
+  // 未配置排序的动态组保持原位置，只重排明确配置的服务商。
+  const ordered = result.filter(group => ranks.has(group.label)).sort((a, b) => ranks.get(a.label) - ranks.get(b.label))
+  let configuredIndex = 0
+  return result.map(group => ranks.has(group.label) ? ordered[configuredIndex++] : group)
+}
+
+export function buildModelProviderGroups(models = [], options = {}) {
+  const { defaultLabel = '', defaultProviderLabel = '默认' } = options
+  const result = groupRuntimeModels(models)
   if (defaultLabel) result.unshift({ value: DEFAULT_PROVIDER_VALUE, label: defaultProviderLabel, models: [{ value: '', label: defaultLabel, model: options.defaultModel || null }] })
   return result
 }

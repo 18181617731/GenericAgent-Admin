@@ -10,13 +10,14 @@ import time
 import types
 import unittest
 from unittest.mock import patch
+from conductor_loop_test_support import explicit_loop_path, loop_source
 
-LOOP_PATH = Path(sys.argv.pop(1)) if len(sys.argv) > 1 else None
+LOOP_PATH = explicit_loop_path(sys.argv)
 
 
 class WorkerInstructionTest(unittest.TestCase):
     def setUp(self):
-        self.assertIsNotNone(LOOP_PATH, 'Pass read-only GA agent_loop.py')
+        source, source_name = loop_source(LOOP_PATH)
         self.loop = types.ModuleType('agent_loop')
         self.fake = types.ModuleType('agentmain')
         hooks = types.ModuleType('plugins.hooks')
@@ -24,7 +25,7 @@ class WorkerInstructionTest(unittest.TestCase):
         self.modules = patch.dict(sys.modules, {'agent_loop': self.loop, 'agentmain': self.fake, 'plugins.hooks': hooks})
         self.modules.start()
         self.addCleanup(self.modules.stop)
-        exec(compile(LOOP_PATH.read_text(encoding='utf-8'), str(LOOP_PATH), 'exec'), self.loop.__dict__)
+        exec(compile(source, source_name, 'exec'), self.loop.__dict__)
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.rows, self.events, self.closed = [], [], False

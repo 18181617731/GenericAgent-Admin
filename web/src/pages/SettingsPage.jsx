@@ -4,7 +4,7 @@ import ScalePicker from '../ScalePicker.jsx'
 
 const update = (setConfig, config, field) => event => setConfig({ ...config, [field]: event.target.value })
 
-export function SettingsPage({ t, lang = 'zh', root, setRoot, config, setConfig, dirty, busy, onSave, onReset, uiScale = 1, onUiScaleChange = () => {} }) {
+export function SettingsPage({ t, lang = 'zh', root, setRoot, config, setConfig, dirty, busy, onSave, onReset, uiScale = 1, onUiScaleChange = () => {}, onLanguage = () => {} }) {
   const proxyMode = config?.proxy_mode || 'off'
   return <section className="settings-page">
     <Panel title={t.nav.settings} className="settings-panel">
@@ -29,6 +29,7 @@ export function SettingsPage({ t, lang = 'zh', root, setRoot, config, setConfig,
 
         <section className="settings-section settings-appearance-section" aria-labelledby="settings-appearance-title">
           <div className="settings-section-head"><h3 id="settings-appearance-title">{lang === 'zh' ? '界面显示' : 'Interface display'}</h3><p>{lang === 'zh' ? '按你的屏幕大小调整字体、间距和组件比例，设置会保存在当前浏览器。' : 'Adjust text, spacing, and component scale for your screen. This is saved in the current browser.'}</p></div>
+          <label className="settings-field" htmlFor="settings-language"><span>{lang === 'zh' ? '语言' : 'Language'}</span><select id="settings-language" aria-label={lang === 'zh' ? '语言' : 'Language'} value={lang} onChange={event => onLanguage(event.target.value)}><option value="zh">中文</option><option value="en">English</option></select></label>
           <ScalePicker value={uiScale} onChange={onUiScaleChange} lang={lang} variant="settings" />
         </section>
 

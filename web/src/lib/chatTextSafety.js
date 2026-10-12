@@ -224,6 +224,24 @@ export const parseAssistantContent = (raw = '', runCache = null) => {
   return { runs: [], ...final }
 }
 
+const ASSISTANT_CACHE_MAX_CHARS = 512 * 1024
+const ASSISTANT_CACHE_MAX_ENTRIES = 64
+
+// 缓存仅复用完全相同的轮次；每次仍重扫协议边界，防止流式标记误判。
+export const createAssistantContentParser = () => {
+  const cache = new Map()
+  return raw => {
+    const result = parseAssistantContent(raw, cache)
+    const visible = new Set(result.runs.map(run => run.turn))
+    let chars = 0
+    for (const [turn, entry] of cache) {
+      chars += entry.chunk.length
+      if (!visible.has(turn) || chars > ASSISTANT_CACHE_MAX_CHARS || cache.size > ASSISTANT_CACHE_MAX_ENTRIES) cache.delete(turn)
+    }
+    return result
+  }
+}
+
 export const assistantFinalResult = (raw = '') => {
   const parsed = parseAssistantContent(raw)
   const final = [parsed.summary, parsed.body].filter(Boolean).join('\n\n').trim()

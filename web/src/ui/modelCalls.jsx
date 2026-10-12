@@ -24,7 +24,7 @@ function SortableRow({ row, studio, children }) {
 function RowActions({ row, model, actions }) {
   const l = model.labels
   return <div className="model-call-actions">
-    <Button type="text" size="small" className="model-call-toggle" aria-expanded={row.expanded} aria-label={`${row.expanded ? l.collapse : l.configure}: ${row.actionName}`} onClick={() => actions.toggle(row.id)}>
+    <Button type="text" size="small" className={`model-call-toggle${row.group ? ' model-failover-group-toggle' : ''}`} aria-expanded={row.expanded} aria-label={`${row.expanded ? l.collapse : l.configure}: ${row.actionName}`} onClick={() => actions.toggle(row.id)}>
       {row.expanded ? l.collapse : l.configure}<ChevronDown size={13}/>
     </Button>
     <Button type="text" size="small" icon={<ArrowUp size={15}/>} aria-label={`${l.up} ${row.actionName}`} title={l.up} disabled={!row.canMoveUp} onClick={() => actions.moveUp(row.id)}/>

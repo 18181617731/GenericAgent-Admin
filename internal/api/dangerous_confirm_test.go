@@ -199,12 +199,13 @@ func TestMutatingRoutesEitherRequireDangerousConfirmOrAreDocumentedSafe(t *testi
 	}
 
 	documentedSafe := map[string]bool{
-		"/api/version/check":  true, // remote version metadata check only; no local writes.
-		"/api/setup/browse":   true, // validates/list paths for setup UX; no persisted configuration.
-		"/api/models/preview": true, // renders preview text only; no writes.
-		"/api/models/probe":   true, // sends bounded provider test requests; no local config writes.
-		"/api/channels/test":  true, // calls provider validation endpoints only; no local config writes.
-		"/api/chat/":          true, // first-party chat CRUD/run endpoint; intentionally outside dangerous-confirm UX.
+		"/api/chat/sidebar-preferences": true, // reversible Admin-only UI preference file; no GA runtime configuration writes.
+		"/api/version/check":            true, // remote version metadata check only; no local writes.
+		"/api/setup/browse":             true, // validates/list paths for setup UX; no persisted configuration.
+		"/api/models/preview":           true, // renders preview text only; no writes.
+		"/api/models/probe":             true, // sends bounded provider test requests; no local config writes.
+		"/api/channels/test":            true, // calls provider validation endpoints only; no local config writes.
+		"/api/chat/":                    true, // first-party chat CRUD/run endpoint; intentionally outside dangerous-confirm UX.
 	}
 
 	var unreviewed []string
@@ -223,12 +224,13 @@ func TestMutatingRoutesEitherRequireDangerousConfirmOrAreDocumentedSafe(t *testi
 
 func TestDocumentedSafeMutatingRoutesStayCurrent(t *testing.T) {
 	documentedSafe := map[string]bool{
-		"/api/version/check":  true,
-		"/api/setup/browse":   true,
-		"/api/models/preview": true,
-		"/api/models/probe":   true,
-		"/api/channels/test":  true,
-		"/api/chat/":          true,
+		"/api/chat/sidebar-preferences": true,
+		"/api/version/check":            true,
+		"/api/setup/browse":             true,
+		"/api/models/preview":           true,
+		"/api/models/probe":             true,
+		"/api/channels/test":            true,
+		"/api/chat/":                    true,
 	}
 
 	registered, err := registeredRoutesFromSource("api.go")
@@ -270,8 +272,9 @@ func TestLocalStateMutatingRoutesHaveReviewedSafetyGate(t *testing.T) {
 	}
 
 	reviewedSafe := map[string]string{
-		"/api/chat/":        "first-party chat CRUD/run endpoint intentionally manages chat state outside dangerous-confirm UX",
-		"/api/models/probe": "provider probe also persists usage telemetry without changing model configuration",
+		"/api/chat/sidebar-preferences": "reversible Admin-only UI preference file, independent of GA runtime configuration",
+		"/api/chat/":                    "first-party chat CRUD/run endpoint intentionally manages chat state outside dangerous-confirm UX",
+		"/api/models/probe":             "provider probe also persists usage telemetry without changing model configuration",
 	}
 
 	var unreviewed []string
@@ -299,8 +302,9 @@ func TestLocalStateMutatingRoutesHaveReviewedSafetyGate(t *testing.T) {
 
 func TestReviewedSafeLocalStateMutatingRoutesStayCurrent(t *testing.T) {
 	reviewedSafe := map[string]string{
-		"/api/chat/":        "first-party chat CRUD/run endpoint intentionally manages chat state outside dangerous-confirm UX",
-		"/api/models/probe": "provider probe also persists usage telemetry without changing model configuration",
+		"/api/chat/sidebar-preferences": "reversible Admin-only UI preference file, independent of GA runtime configuration",
+		"/api/chat/":                    "first-party chat CRUD/run endpoint intentionally manages chat state outside dangerous-confirm UX",
+		"/api/models/probe":             "provider probe also persists usage telemetry without changing model configuration",
 	}
 
 	registered, err := registeredRoutesFromSource("api.go")

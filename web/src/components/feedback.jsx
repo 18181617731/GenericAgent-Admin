@@ -128,7 +128,7 @@ export function GlobalFeedback({ message, tone = 'auto', onDismiss, onRetry, ret
     return () => window.clearTimeout(timer)
   }, [message, onDismiss, resolvedTone, successTimeout])
   if (!message) return null
-  return <div className={`global-feedback global-feedback-${resolvedTone} is-${placement}`} role={resolvedTone === 'error' ? 'alert' : 'status'} aria-live={resolvedTone === 'error' ? 'assertive' : 'polite'}>
+  return <div className={`global-feedback ga-status-notice global-feedback-${resolvedTone} is-${placement}`} role={resolvedTone === 'error' ? 'alert' : 'status'} aria-live={resolvedTone === 'error' ? 'assertive' : 'polite'} aria-busy={resolvedTone === 'progress' ? 'true' : undefined}>
     <span className="global-feedback-mark" aria-hidden="true"/>
     <p>{message}</p>
     {onRetry && <button type="button" onClick={onRetry}>{retryLabel}</button>}

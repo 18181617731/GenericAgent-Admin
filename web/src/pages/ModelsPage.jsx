@@ -1,4 +1,5 @@
 import ModelDiscoveryList from './ModelDiscoveryList'
+import { Models as DraftModels } from './ModelsDraftPage.jsx'
 import './models-workbench.css'
 import './models-redesign.css'
 import './models-failover.css'
@@ -151,6 +152,7 @@ function OptionalBoolSelect({ value, onChange, t, trueLabel, falseLabel }) {
 
 function ModelConfigRow({ config, index, officialIndex, protocol, onChange, onRemove, onOpenProvider, providerLabel, callList = false, t }) {
   const text = t.models
+  const advanced = modelAdvancedView(config, protocol, t, onChange)
   const [configOpen, setConfigOpen] = useState(false)
   const fields = modelProtocolFields(protocol)
   const enabled = isModelConfigEnabled(config)
@@ -230,6 +232,7 @@ function ModelConfigRow({ config, index, officialIndex, protocol, onChange, onRe
 
       {configOpen && (
         <div className="model-row-advanced">
+          <UiSurface name="admin.models.editor.advanced" viewProps={{ model: advanced.model, actions: advanced.actions }} />
           <div className="model-row-advanced-grid">
             <label className="model-field">
               <span className="model-field-label">{text.displayName || '\u663e\u793a\u540d\u79f0'}</span>
@@ -1272,7 +1275,13 @@ function LegacyFailoverRows({ groups = [], text }) {
   )
 }
 
-export function Models({
+export function Models(props) {
+  return typeof props.saveAll === 'function'
+    ? <DraftModels {...props}/>
+    : <LegacyModels {...props}/>
+}
+
+function LegacyModels({
   officialSlots = {},
   t,
   profiles,

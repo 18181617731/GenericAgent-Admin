@@ -216,7 +216,11 @@ test('project folder action uses selected instance and confirmed folder opening'
 test('project activity stays in the header independently of filtered sessions', () => {
   const source = readFileSync(new URL('../ChatApp.jsx', import.meta.url), 'utf8')
   assert.match(source, /const runningProjects = runningProjectKeys\(sessions, waitingSessionIds\)/)
-  const header = functionBlock(source, '<div className="oa-project-head">', '<div className="oa-project-body"')
+  assert.match(source, /runningProjects=\{runningProjects\}/)
+  const sidebar = readFileSync(new URL('../components/ChatSidebar.jsx', import.meta.url), 'utf8')
+  assert.match(sidebar, /runningProjects=\{runningProjects\}/)
+  const list = readFileSync(new URL('../components/ChatSessionList.jsx', import.meta.url), 'utf8')
+  const header = functionBlock(list, '<div className="oa-project-head">', '<div className="oa-project-body"')
   assert.match(header, /runningProjects\.has\(projectKey\)/)
   assert.match(header, /oa-project-running/)
   assert.match(header, /role="img"/)

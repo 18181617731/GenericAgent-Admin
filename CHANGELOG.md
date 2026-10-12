@@ -2,6 +2,16 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.134 - 2026-10-12
+
+### Dual-source synchronization and release recovery
+- Merge GenericAgent-Admin through `fdd3d649` (v0.4.2), including idle-worker retirement, bounded replay cleanup, persisted sidebar preferences, and update execution/download telemetry.
+- Preserve local instance isolation, model workbench and draft-editor contracts, authenticated update mirrors, cancellation handshakes, and delegated-worker completion behavior.
+- Repair merged frontend imports, composer/session wiring, content parsing, usage refresh, and model grouping; retain the existing regression assertions.
+- Fix the Loop persistence lock re-entry and ensure late Conductor results can resume a parent after its canceled run has ended.
+- Restore request/first-token timing and persisted worldline working memory; verify Conductor against a digest-pinned, read-only GenericAgent loop without copying its runtime into Admin.
+- Verify frontend lint/build and 631 library, 129 main UI, 6 sidebar-hook tests; Go test/vet/build; all 128 Python tests; Windows packaging and executable/manifest/PE metadata.
+
 ## v1.0.128 - 2026-09-10
 
 ### Upstream chat compatibility

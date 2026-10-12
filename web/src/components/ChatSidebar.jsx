@@ -125,6 +125,7 @@ export default function ChatSidebar({
   onDeleteProject,
   sessions = [],
   projectGroups = [],
+  runningProjects = EMPTY_SET,
   recentGroups = [],
   recentGroupLabels = {},
   sidebarSearch = '',
@@ -303,6 +304,7 @@ export default function ChatSidebar({
         tab={sidebarTab}
         recentGroups={recentGroups}
         projectGroups={projectGroups}
+        runningProjects={runningProjects}
         recentGroupLabels={recentGroupLabels}
         sidebarSearch={sidebarSearch}
         expandedProjectNames={expandedProjectNames}
