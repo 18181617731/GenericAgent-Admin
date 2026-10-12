@@ -3889,6 +3889,9 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
   const [err, setErr] = useState('')
   const [collapsed, setCollapsed] = useState(() => isNarrowChatViewport())
   const [notice, setNotice] = useState('')
+  useEffect(() => {
+    if (sidebarPreferencesError) setNotice(ct('侧栏设置未保存到后端：', 'Sidebar settings were not saved to the server: ') + sidebarPreferencesError)
+  }, [sidebarPreferencesError, ct])
   const [sessionCopyNotice, updateSessionCopyNotice] = useState('')
   const sessionCopyNoticeTimerRef = useRef(null)
   const setSessionCopyNotice = useCallback((message) => {

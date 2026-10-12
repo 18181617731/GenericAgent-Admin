@@ -221,6 +221,17 @@ type ReleaseManifest struct {
 	Asset   string `json:"asset"`
 }
 
+// DownloadProgress describes one file, separately from transaction progress.
+// Percent is -1 when neither the response nor release metadata supplies a size.
+type DownloadProgress struct {
+	Name            string `json:"name"`
+	DownloadedBytes int64  `json:"downloaded_bytes"`
+	TotalBytes      int64  `json:"total_bytes"`
+	Percent         int    `json:"percent"`
+	Attempt         int    `json:"attempt"`
+	Complete        bool   `json:"complete"`
+}
+
 type UpdateStatus struct {
 	ID             string       `json:"id,omitempty"`
 	PID            int          `json:"pid,omitempty"`
@@ -275,6 +286,8 @@ func RestartHandoffPID() (int, bool) {
 	}
 	return st.PID, true
 }
+
+const maxUpdateLogBytes = 32 << 10
 
 func readStatusLocked() UpdateStatus {
 	var st UpdateStatus
@@ -387,10 +400,39 @@ func writeStatus(st UpdateStatus) error {
 	return writeStatusLocked(st)
 }
 
+func appendUpdateLog(st *UpdateStatus, message string) {
+	st.Log += st.UpdatedAt.UTC().Format(time.RFC3339) + "  " + message + "\n"
+	if len(st.Log) > maxUpdateLogBytes {
+		st.Log = st.Log[len(st.Log)-maxUpdateLogBytes:]
+		if cut := strings.IndexByte(st.Log, '\n'); cut >= 0 && cut < len(st.Log)-1 {
+			st.Log = st.Log[cut+1:]
+		}
+		st.Log = strings.ToValidUTF8(st.Log, "")
+	}
+}
+
 func writeStatusLocked(st UpdateStatus) error {
+	previous := readStatusLocked()
 	st.UpdatedAt = time.Now()
 	if st.ID == "" {
 		st.ID = fmt.Sprintf("update-%d", st.UpdatedAt.Unix())
+	}
+	// Preserve the log across writes for the same operation only.
+	if previous.ID == st.ID {
+		st.Log = previous.Log
+	}
+	if previous.ID != st.ID || previous.Stage != st.Stage || previous.Message != st.Message || previous.Error != st.Error {
+		message := st.Message
+		if message == "" {
+			message = st.Stage
+		}
+		if st.Error != "" && !strings.Contains(message, st.Error) {
+			message += ": " + st.Error
+		}
+		appendUpdateLog(&st, message)
+	}
+	if st.Download != nil && st.Download.Attempt > 1 && (previous.Download == nil || previous.Download.Attempt != st.Download.Attempt || previous.Download.Name != st.Download.Name) {
+		appendUpdateLog(&st, fmt.Sprintf("Retry download %s (attempt %d)", st.Download.Name, st.Download.Attempt))
 	}
 	b, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
@@ -635,7 +677,7 @@ func ApplyLatest(ctx context.Context) (ApplyResult, error) {
 func applyLatest(ctx context.Context, progress func(stage, msg string, pct int, check *CheckResult)) (ApplyResult, error) {
 	emit := func(stage, msg string, pct int, check *CheckResult) {
 		if progress != nil {
-			progress(stage, msg, pct, check)
+			progress(stage, msg, pct, check, nil)
 		}
 	}
 	emit("checking", "正在检查最新版本", 5, nil)

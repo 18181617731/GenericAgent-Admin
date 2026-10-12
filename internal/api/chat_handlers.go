@@ -973,6 +973,10 @@ func (s *Server) chatDeleteSession(w http.ResponseWriter, r *http.Request, sid s
 	}
 	s.ChatMu.Lock()
 	worker := s.ChatWorkers[sid]
+	if run := s.ChatRuns[sid]; run != nil && run.ReplayCleanup != nil {
+		run.ReplayCleanup.Stop()
+	}
+	delete(s.ChatRuns, sid)
 	s.ChatMu.Unlock()
 	if worker != nil {
 		s.dropChatWorker(sid, worker)

@@ -29,6 +29,11 @@ export default function SystemUpdateModal({ open, onClose, version, lang = 'zh' 
       <section className={`system-update-state is-${view.tone}`} aria-label={text.stage} aria-live="polite">
         <div className="system-update-state-heading">{icon}<strong>{view.label}</strong>{status?.stage && <span>{view.progress}%</span>}</div>
         {status?.stage && <div className="system-update-progress" role="progressbar" aria-label={text.stage} aria-valuemin={0} aria-valuemax={100} aria-valuenow={view.progress}><i style={{ width: `${view.progress}%` }}/></div>}
+        {view.download && <div className="system-update-download">
+          <div className="system-update-download-heading"><span>{text.download}: <code>{view.download.name}</code></span><strong>{view.download.percent == null ? text.unknownSize : `${view.download.percent}%`}</strong></div>
+          <div className={`system-update-progress${view.download.percent == null ? ' is-indeterminate' : ''}`} role="progressbar" aria-label={text.download} aria-valuemin={0} aria-valuemax={100} aria-valuenow={view.download.percent ?? undefined} aria-valuetext={view.download.percent == null ? view.download.bytes : undefined}><i style={{ width: `${view.download.percent ?? 25}%` }}/></div>
+          <p className="system-update-download-bytes">{view.download.bytes}{view.download.attempt && ` | ${view.download.attempt}`}</p>
+        </div>}
         {view.hint && <p>{view.hint}</p>}
         {status?.message && <p className="system-update-detail">{status.message}</p>}
         {view.error && <p className="system-update-error" role="alert">{view.error}</p>}
@@ -46,7 +51,7 @@ export default function SystemUpdateModal({ open, onClose, version, lang = 'zh' 
           {release?.body ? <MarkdownPreview text={release.body} className="system-update-release-text" /> : <p className="system-update-empty">{release ? text.noNotes : text.notesUnchecked}</p>}
         </section>
         <section className="system-update-log"><header><h3>{text.log}</h3><button type="button" onClick={() => version.refreshStatus().catch(() => {})} disabled={version.busy}><RefreshCw size={13}/>{text.refresh}</button></header>
-          {status?.log ? <pre tabIndex={0} aria-label={text.log}>{status.log}</pre> : <p className="system-update-empty">{text.noLog}</p>}
+          {view.log ? <pre tabIndex={0} aria-label={text.log}>{view.log}</pre> : <p className="system-update-empty">{text.noLog}</p>}
         </section>
       </div>
     </div>

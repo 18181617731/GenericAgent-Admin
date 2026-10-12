@@ -49,6 +49,7 @@ type Server struct {
 	ConfigMu            *sync.Mutex
 	ChatRuns            map[string]*chatRun
 	ChatWorkers         map[string]*chatWorker
+	chatWorkersClosing  bool // legacy servers without a chatRuntime; guarded by ChatMu
 	ChatLoopControllers map[string]*chatLoopControllerRun
 	ChatTitleJobs       map[string]bool
 	ChatRuntimes        *chatRuntimeRegistry
@@ -343,6 +344,7 @@ var riskCatalogItems = []riskCatalogItem{
 	{Path: "/api/local-cmd/sessions", Level: "dangerous", Action: "create_remote_cmd_session", Reason: "starts a Windows ConPTY cmd.exe session reachable through the authenticated Admin browser"},
 	{Path: "/api/local-cmd/sessions/", Level: "dangerous", Action: "control_remote_cmd_session", Reason: "writes input, resizes, or terminates a remote Windows ConPTY session"},
 	{Path: "/api/config", Level: "reversible", Action: "save_config", Reason: "updates Admin-Go local config"},
+	{Path: "/api/chat/sidebar-preferences", Level: "reversible", Action: "save_sidebar_preferences", Reason: "persists Admin-wide sidebar UI preferences outside GA runtime configuration"},
 	{Path: "/api/ui/theme", Level: "reversible", Action: "save_ui_theme", Reason: "updates the persisted Admin-Go appearance theme without a confirm dialog"},
 	{Path: "/api/instances/create", Level: "reversible", Action: "create_instance", Reason: "adds a configured GA runtime instance"},
 	{Path: "/api/instances/update", Level: "reversible", Action: "update_instance", Reason: "updates a configured GA runtime instance when its manager is idle"},

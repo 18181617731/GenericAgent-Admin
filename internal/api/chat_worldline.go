@@ -224,6 +224,7 @@ func (s *Server) chatWorldlineRPC(sid string, req map[string]interface{}) (chatW
 	if err != nil {
 		return chatWorldlineResponse{}, err
 	}
+	defer s.releaseChatWorker(sid, worker)
 	worker.Mu.Lock()
 	defer worker.Mu.Unlock()
 	return s.chatWorldlineRPCLocked(sid, worker, strings.TrimSpace(cs.Workspace), req)
@@ -300,6 +301,7 @@ func (s *Server) prepareChatWorldlineResend(sid string, token *chatRun, cs *chat
 	if err != nil {
 		return err
 	}
+	defer s.releaseChatWorker(sid, worker)
 	worker.Mu.Lock()
 	defer worker.Mu.Unlock()
 	state, err := s.chatWorldlineRPCLocked(sid, worker, strings.TrimSpace(cs.Workspace), map[string]interface{}{

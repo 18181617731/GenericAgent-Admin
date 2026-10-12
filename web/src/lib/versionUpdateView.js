@@ -1,5 +1,6 @@
 const TEXT = {
   zh: {
+    download: '文件下载', unknownSize: '大小未知', attempt: '尝试',
     title: '系统更新', subtitle: '检查发行版本，准备更新，并在确认后重启生效。', open: '管理更新',
     current: '当前运行', latest: '最新发行', pending: '待生效版本', notChecked: '尚未检查', noPending: '没有待生效更新',
     check: '检查更新', checking: '正在检查', prepare: '下载并准备更新', restart: '重启并生效', close: '关闭',
@@ -20,6 +21,7 @@ const TEXT = {
     stages: { queued: '已排队', checking: '检查发行', checked: '发行已检查', downloading: '下载升级包', downloading_checksum: '下载校验文件', verifying: '校验 SHA256', extracting: '解包', preparing: '准备更新', prepared: '更新已暂存', ready: '等待重启', restarting: '重启已授权', starting_helper: '启动更新助手', waiting_for_exit: '等待旧进程退出', applying: '替换文件', starting_replacement: '启动新版本', replacement_ready: '验证新版本', rolling_back: '正在回滚', rolled_back: '已回滚', failed: '更新失败', done: '更新完成' },
   },
   en: {
+    download: 'File download', unknownSize: 'Unknown size', attempt: 'Attempt',
     title: 'System update', subtitle: 'Check releases, prepare the update, then confirm a restart to apply it.', open: 'Manage update',
     current: 'Running version', latest: 'Latest release', pending: 'Pending version', notChecked: 'Not checked', noPending: 'No pending update',
     check: 'Check updates', checking: 'Checking', prepare: 'Download & prepare', restart: 'Restart & apply', close: 'Close',
@@ -47,6 +49,33 @@ const PREPARING = new Set(['queued', 'checking', 'checked', 'downloading', 'down
 const HANDOFF = new Set(['prepared', 'restarting', 'starting_helper', 'waiting_for_exit', 'applying', 'starting_replacement', 'replacement_ready', 'rolling_back'])
 export const updateOperationLocked = status => Boolean(status?.running || status?.stage === 'ready' || PREPARING.has(status?.stage) || HANDOFF.has(status?.stage))
 
+const byteLabel = bytes => {
+  const value = Math.max(0, Number(bytes) || 0)
+  if (value < 1024) return `${value} B`
+  if (value < 1024 ** 2) return `${(value / 1024).toFixed(1)} KiB`
+  return `${(value / 1024 ** 2).toFixed(1)} MiB`
+}
+
+export function updateDownloadView(download, lang = 'zh') {
+  if (!download) return null
+  const text = updateText(lang)
+  const percent = Number(download.percent)
+  const known = Number.isFinite(percent) && percent >= 0 && download.percent != null
+  return {
+    name: download.name || text.download,
+    percent: known ? Math.min(100, Math.max(0, Math.floor(percent))) : null,
+    bytes: `${byteLabel(download.downloaded_bytes)} / ${Number(download.total_bytes) > 0 ? byteLabel(download.total_bytes) : text.unknownSize}`,
+    attempt: Number(download.attempt) > 1 ? `${text.attempt} ${download.attempt}` : '',
+  }
+}
+
+export function updateLogView(status, lang = 'zh') {
+  if (typeof status?.log === 'string' && status.log.trim()) return status.log
+  if (!status?.stage && !status?.message && !status?.error) return ''
+  const stage = updateText(lang).stages[status.stage] || status.stage || ''
+  return [stage, status.message, status.error].filter(Boolean).filter((line, i, all) => all.indexOf(line) === i).join('\n')
+}
+
 export function versionUpdateView({ info, check, status, busy, checking, checkError, statusError, actionError }, lang = 'zh') {
   const text = updateText(lang)
   const stage = status?.stage || ''
@@ -66,6 +95,8 @@ export function versionUpdateView({ info, check, status, busy, checking, checkEr
   if (statusError) { label = text.connectionLost; tone = 'error' }
   return {
     label, tone, hint, locked, failed,
+    download: updateDownloadView(status?.download, lang),
+    log: updateLogView(status, lang),
     error: status?.error || actionError || '',
     pending: locked ? (status?.target_version || status?.check?.latest?.tag_name || '') : '',
     progress: Math.min(100, Math.max(0, Number(status?.progress) || 0)),
