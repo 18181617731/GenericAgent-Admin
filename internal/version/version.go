@@ -185,33 +185,46 @@ type readyUpdate struct {
 	ManifestPath string `json:"manifest_path"`
 }
 
+// DownloadProgress describes one file, separately from transaction progress.
+// Percent is -1 when neither the response nor release metadata supplies a size.
+type DownloadProgress struct {
+	Name            string `json:"name"`
+	DownloadedBytes int64  `json:"downloaded_bytes"`
+	TotalBytes      int64  `json:"total_bytes"`
+	Percent         int    `json:"percent"`
+	Attempt         int    `json:"attempt"`
+	Complete        bool   `json:"complete"`
+}
+
 type UpdateStatus struct {
-	ID               string       `json:"id,omitempty"`
-	PID              int          `json:"pid,omitempty"`
-	OldPID           int          `json:"old_pid,omitempty"`
-	HelperPID        int          `json:"helper_pid,omitempty"`
-	NewPID           int          `json:"new_pid,omitempty"`
-	Running          bool         `json:"running"`
-	Stage            string       `json:"stage"`
-	Progress         int          `json:"progress"`
-	Message          string       `json:"message"`
-	Error            string       `json:"error,omitempty"`
-	Script           string       `json:"script,omitempty"`
-	SourceVersion    string       `json:"source_version,omitempty"`
-	TargetVersion    string       `json:"target_version,omitempty"`
-	InstalledVersion string       `json:"installed_version,omitempty"`
-	ConfirmedVersion string       `json:"confirmed_version,omitempty"`
-	RollbackResult   string       `json:"rollback_result,omitempty"`
-	Check            *CheckResult `json:"check,omitempty"`
-	StartedAt        time.Time    `json:"started_at,omitempty"`
-	StagedAt         time.Time    `json:"staged_at,omitempty"`
-	HelperStartedAt  time.Time    `json:"helper_started_at,omitempty"`
-	WaitingAt        time.Time    `json:"waiting_at,omitempty"`
-	ApplyingAt       time.Time    `json:"applying_at,omitempty"`
-	RestartedAt      time.Time    `json:"restarted_at,omitempty"`
-	ConfirmedAt      time.Time    `json:"confirmed_at,omitempty"`
-	UpdatedAt        time.Time    `json:"updated_at,omitempty"`
-	EndedAt          time.Time    `json:"ended_at,omitempty"`
+	ID               string            `json:"id,omitempty"`
+	PID              int               `json:"pid,omitempty"`
+	OldPID           int               `json:"old_pid,omitempty"`
+	HelperPID        int               `json:"helper_pid,omitempty"`
+	NewPID           int               `json:"new_pid,omitempty"`
+	Running          bool              `json:"running"`
+	Stage            string            `json:"stage"`
+	Progress         int               `json:"progress"`
+	Download         *DownloadProgress `json:"download,omitempty"`
+	Log              string            `json:"log,omitempty"`
+	Message          string            `json:"message"`
+	Error            string            `json:"error,omitempty"`
+	Script           string            `json:"script,omitempty"`
+	SourceVersion    string            `json:"source_version,omitempty"`
+	TargetVersion    string            `json:"target_version,omitempty"`
+	InstalledVersion string            `json:"installed_version,omitempty"`
+	ConfirmedVersion string            `json:"confirmed_version,omitempty"`
+	RollbackResult   string            `json:"rollback_result,omitempty"`
+	Check            *CheckResult      `json:"check,omitempty"`
+	StartedAt        time.Time         `json:"started_at,omitempty"`
+	StagedAt         time.Time         `json:"staged_at,omitempty"`
+	HelperStartedAt  time.Time         `json:"helper_started_at,omitempty"`
+	WaitingAt        time.Time         `json:"waiting_at,omitempty"`
+	ApplyingAt       time.Time         `json:"applying_at,omitempty"`
+	RestartedAt      time.Time         `json:"restarted_at,omitempty"`
+	ConfirmedAt      time.Time         `json:"confirmed_at,omitempty"`
+	UpdatedAt        time.Time         `json:"updated_at,omitempty"`
+	EndedAt          time.Time         `json:"ended_at,omitempty"`
 }
 
 type applyRuntimeDeps struct {
@@ -351,6 +364,8 @@ func CurrentUpdateStatus() UpdateStatus {
 	return current
 }
 
+const maxUpdateLogBytes = 32 << 10
+
 func readStatusLocked() UpdateStatus {
 	var st UpdateStatus
 	b, err := os.ReadFile(statusPath())
@@ -463,10 +478,39 @@ func writeStatus(st UpdateStatus) error {
 	})
 }
 
+func appendUpdateLog(st *UpdateStatus, message string) {
+	st.Log += st.UpdatedAt.UTC().Format(time.RFC3339) + "  " + message + "\n"
+	if len(st.Log) > maxUpdateLogBytes {
+		st.Log = st.Log[len(st.Log)-maxUpdateLogBytes:]
+		if cut := strings.IndexByte(st.Log, '\n'); cut >= 0 && cut < len(st.Log)-1 {
+			st.Log = st.Log[cut+1:]
+		}
+		st.Log = strings.ToValidUTF8(st.Log, "")
+	}
+}
+
 func writeStatusLocked(st UpdateStatus) error {
+	previous := readStatusLocked()
 	st.UpdatedAt = time.Now()
 	if st.ID == "" {
 		st.ID = fmt.Sprintf("update-%d", st.UpdatedAt.UnixNano())
+	}
+	// Preserve the log across writes for the same operation only.
+	if previous.ID == st.ID {
+		st.Log = previous.Log
+	}
+	if previous.ID != st.ID || previous.Stage != st.Stage || previous.Message != st.Message || previous.Error != st.Error {
+		message := st.Message
+		if message == "" {
+			message = st.Stage
+		}
+		if st.Error != "" && !strings.Contains(message, st.Error) {
+			message += ": " + st.Error
+		}
+		appendUpdateLog(&st, message)
+	}
+	if st.Download != nil && st.Download.Attempt > 1 && (previous.Download == nil || previous.Download.Attempt != st.Download.Attempt || previous.Download.Name != st.Download.Name) {
+		appendUpdateLog(&st, fmt.Sprintf("Retry download %s (attempt %d)", st.Download.Name, st.Download.Attempt))
 	}
 	b, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
@@ -632,7 +676,7 @@ func StartApplyLatest() (UpdateStatus, error) {
 			defer progressMu.Unlock()
 			return progressErr
 		}
-		res, applyErr := applyLatest(ctx, operationID, func(stage, msg string, progress int, check *CheckResult) {
+		res, applyErr := applyLatest(ctx, operationID, func(stage, msg string, progress int, check *CheckResult, transfer *DownloadProgress) {
 			if progress < 0 {
 				progress = 0
 			}
@@ -641,6 +685,7 @@ func StartApplyLatest() (UpdateStatus, error) {
 			}
 			err := transitionUpdate(operationID, func(current *UpdateStatus) error {
 				current.Stage, current.Message, current.Progress = stage, msg, progress
+				current.Download = transfer
 				if check != nil {
 					current.Check = check
 					current.TargetVersion = strings.TrimSpace(check.Latest.TagName)
@@ -879,10 +924,10 @@ func ApplyLatest(ctx context.Context) (ApplyResult, error) {
 	return applyLatest(ctx, reserved.ID, nil)
 }
 
-func applyLatest(ctx context.Context, operationID string, progress func(stage, msg string, pct int, check *CheckResult)) (ApplyResult, error) {
+func applyLatest(ctx context.Context, operationID string, progress func(stage, msg string, pct int, check *CheckResult, transfer *DownloadProgress)) (ApplyResult, error) {
 	emit := func(stage, msg string, pct int, check *CheckResult) {
 		if progress != nil {
-			progress(stage, msg, pct, check)
+			progress(stage, msg, pct, check, nil)
 		}
 	}
 	emit("checking", "正在检查最新版本", 5, nil)
@@ -911,12 +956,28 @@ func applyLatest(ctx context.Context, operationID string, progress func(stage, m
 	}
 	zipPath := filepath.Join(work, check.Asset.Name)
 	sumPath := filepath.Join(work, check.Checksum.Name)
+	reportDownload := func(stage, name string, base, span int) func(DownloadProgress) {
+		return func(d DownloadProgress) {
+			d.Name = name
+			pct := base
+			if d.Percent >= 0 {
+				pct += span * d.Percent / 100
+			}
+			msg := "正在下载 " + name
+			if d.Complete {
+				msg = "下载完成 " + name
+			}
+			if progress != nil {
+				progress(stage, msg, pct, &check, &d)
+			}
+		}
+	}
 	emit("downloading", "正在下载升级包", 25, &check)
-	if err := download(ctx, check.Asset.BrowserDownloadURL, zipPath, maxUpdatePackageBytes); err != nil {
+	if err := downloadWithProgress(ctx, check.Asset.BrowserDownloadURL, zipPath, maxUpdatePackageBytes, check.Asset.Size, reportDownload("downloading", check.Asset.Name, 25, 30)); err != nil {
 		return ApplyResult{}, err
 	}
 	emit("downloading_checksum", "正在下载校验文件", 55, &check)
-	if err := download(ctx, check.Checksum.BrowserDownloadURL, sumPath, maxUpdateChecksumBytes); err != nil {
+	if err := downloadWithProgress(ctx, check.Checksum.BrowserDownloadURL, sumPath, maxUpdateChecksumBytes, check.Checksum.Size, reportDownload("downloading_checksum", check.Checksum.Name, 55, 10)); err != nil {
 		return ApplyResult{}, err
 	}
 	emit("verifying", "正在校验 SHA256", 65, &check)
@@ -1223,9 +1284,50 @@ func splitVer(s string) [3]int {
 	return out
 }
 
-func download(ctx context.Context, url, dest string, maxBytes int64) (err error) {
+func download(ctx context.Context, url, dest string, maxBytes int64) error {
+	return downloadWithProgress(ctx, url, dest, maxBytes, 0, nil)
+}
+
+// Throttle disk-backed progress; completion is emitted only after atomic rename.
+type downloadProgressWriter struct {
+	report func(DownloadProgress)
+	state  DownloadProgress
+	last   time.Time
+}
+
+func (w *downloadProgressWriter) emit(complete bool) {
+	w.state.Complete = complete
+	w.state.Percent = -1
+	if w.state.TotalBytes > 0 {
+		w.state.Percent = int(w.state.DownloadedBytes * 100 / w.state.TotalBytes)
+		if w.state.Percent > 99 {
+			w.state.Percent = 99
+		}
+	}
+	if complete {
+		w.state.Percent = 100
+	}
+	w.last = time.Now()
+	if w.report != nil {
+		w.report(w.state)
+	}
+}
+
+func (w *downloadProgressWriter) Write(p []byte) (int, error) {
+	w.state.DownloadedBytes += int64(len(p))
+	if time.Since(w.last) >= 500*time.Millisecond {
+		w.emit(false)
+	}
+	return len(p), nil
+}
+
+func downloadWithProgress(ctx context.Context, url, dest string, maxBytes, expectedBytes int64, report func(DownloadProgress)) (err error) {
 	downloadURL := resolveDownloadURL(url)
+	attempt := 0
 	err = retryHTTPRequest(ctx, "download "+downloadURL, func() error {
+		attempt++
+		tracker := &downloadProgressWriter{report: report, state: DownloadProgress{TotalBytes: expectedBytes, Attempt: attempt}}
+		tracker.emit(false)
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 		if err != nil {
 			return fmt.Errorf("create download request: %w", err)
@@ -1245,13 +1347,19 @@ func download(ctx context.Context, url, dest string, maxBytes int64) (err error)
 		if maxBytes > 0 && resp.ContentLength > maxBytes {
 			return fmt.Errorf("download too large: %d bytes exceeds limit %d", resp.ContentLength, maxBytes)
 		}
+		if resp.ContentLength > 0 {
+			tracker.state.TotalBytes = resp.ContentLength
+		}
+		tracker.emit(false)
 		r := resp.Body
 		if maxBytes > 0 {
 			r = http.MaxBytesReader(nil, resp.Body, maxBytes)
 		}
-		if err := writeStreamAtomic(dest, r, 0600); err != nil {
+		if err := writeStreamAtomic(dest, io.TeeReader(r, tracker), 0600); err != nil {
+			tracker.emit(false)
 			return fmt.Errorf("write download file: %w", err)
 		}
+		tracker.emit(true)
 		return nil
 	})
 	return err

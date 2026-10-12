@@ -55,3 +55,27 @@ test('progress is bounded and bilingual operation-change feedback exists', () =>
   assert.equal(view({ status: { progress: 101 } }).progress, 100)
   for (const lang of ['en', 'zh']) assert.ok(updateText(lang).operationChanged)
 })
+
+test('file percentage is independent of transaction progress, bounded, and shows bytes/retry', () => {
+  const status = { stage: 'downloading', progress: 35, download: { name: 'package.zip', percent: 50, downloaded_bytes: 1048576, total_bytes: 2097152, attempt: 2 } }
+  const actual = view({ status })
+  assert.equal(actual.progress, 35)
+  assert.equal(actual.download.percent, 50)
+  assert.equal(actual.download.name, 'package.zip')
+  assert.equal(actual.download.bytes, '1.0 MiB / 2.0 MiB')
+  assert.ok(actual.download.attempt.includes('2'))
+  assert.equal(view({ status: { download: { percent: 102 } } }).download.percent, 100)
+})
+test('unknown total never fabricates a file percentage and old statuses remain compatible', () => {
+  const actual = view({ status: { stage: 'downloading', download: { percent: -1, downloaded_bytes: 2048 } } })
+  assert.equal(actual.download.percent, null)
+  assert.ok(actual.download.bytes.startsWith('2.0 KiB / '))
+  assert.equal(view({ status: { stage: 'ready' } }).download, null)
+  assert.equal(view({ status: { download: {} } }).download.percent, null)
+})
+test('persisted execution log takes precedence and legacy status gets useful fallback', () => {
+  assert.equal(view({ status: { stage: 'downloading', log: 'phase one\nphase two\n' } }).log, 'phase one\nphase two\n')
+  const legacy = view({ status: { stage: 'failed', message: 'Download failed', error: 'disk full' } }).log
+  assert.ok(legacy.includes('Download failed') && legacy.includes('disk full'))
+  assert.equal(view({ status: {} }).log, '')
+})
