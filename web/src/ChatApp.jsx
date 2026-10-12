@@ -6580,7 +6580,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
       if (stopped || inFlight || document.hidden) return
       inFlight = true
       try {
-        const d = await chatApi('/api/chat/sessions')
+        const d = await loadSessionList()
         if (!stopped) {
           const previous = sessionsRef.current
           const next = mergeChatSessionDraftSessions(d.sessions, chatInstanceRef.current)

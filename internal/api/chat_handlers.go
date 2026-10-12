@@ -1,8 +1,6 @@
 package api
 
 import (
-	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -37,7 +35,12 @@ func (s *Server) chatSessions(w http.ResponseWriter, r *http.Request) {
 		bad(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	sort.Slice(summaries, func(i, j int) bool { return summaries[i].UpdatedAt > summaries[j].UpdatedAt })
+	sort.Slice(summaries, func(i, j int) bool {
+		if summaries[i].UpdatedAt == summaries[j].UpdatedAt {
+			return summaries[i].ID < summaries[j].ID
+		}
+		return summaries[i].UpdatedAt > summaries[j].UpdatedAt
+	})
 	items := make([]map[string]interface{}, 0, len(summaries))
 	for _, summary := range summaries {
 		if (state == "active" && summary.Archived) || (state == "archived" && !summary.Archived) {
@@ -54,7 +57,7 @@ func (s *Server) chatSessions(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	projects, pinnedProjects := chatProjectNamesFor(cfg)
-	writeJSON(w, map[string]interface{}{"sessions": items, "projects": projects, "project_items": discoverProjectItems(cfg), "pinned_projects": pinnedProjects, "project_order": loadProjectPrefs(cfg).Order})
+	writeCachedJSON(w, r, map[string]interface{}{"sessions": items, "projects": projects, "project_items": discoverProjectItems(cfg), "pinned_projects": pinnedProjects, "project_order": loadProjectPrefs(cfg).Order})
 }
 
 func (s *Server) chatHandler(w http.ResponseWriter, r *http.Request) {
@@ -512,24 +515,7 @@ func (s *Server) chatGetSession(w http.ResponseWriter, r *http.Request, sid stri
 		bad(w, status, err.Error())
 		return
 	}
-	body, err := json.Marshal(view)
-	if err != nil {
-		bad(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	// Hash the complete client snapshot: updated_at alone misses same-second edits.
-	etag := fmt.Sprintf(`"%x"`, sha256.Sum256(body))
-	w.Header().Set("ETag", etag)
-	w.Header().Set("Cache-Control", "private, no-cache")
-	for _, candidate := range strings.Split(r.Header.Get("If-None-Match"), ",") {
-		candidate = strings.TrimSpace(candidate)
-		if candidate == "*" || strings.TrimPrefix(candidate, "W/") == etag {
-			w.WriteHeader(http.StatusNotModified)
-			return
-		}
-	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_, _ = w.Write(body)
+	writeCachedJSON(w, r, view)
 }
 
 func (s *Server) chatRenameSession(w http.ResponseWriter, r *http.Request, sid string) {

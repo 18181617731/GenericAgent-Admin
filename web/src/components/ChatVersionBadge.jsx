@@ -4,6 +4,7 @@ import { ChevronDown, Download } from 'lucide-react'
 import { api } from '../lib/api'
 import { I18N } from '../lib/i18n'
 import { useVersionUpdates } from '../hooks/useVersionUpdates'
+import { useVersionNotification } from '../hooks/useVersionNotification'
 import SystemUpdateModal from './SystemUpdateModal'
 import './ChatVersionBadge.css'
 
@@ -13,6 +14,7 @@ const chatLanguage = () => localStorage.getItem('ga-admin-lang') === 'en' ? 'en'
 export default function ChatVersionBadge({ version: suppliedVersion, children } = {}) {
   const [updateOpen, setUpdateOpen] = useState(false)
   const [lang, setLang] = useState(chatLanguage)
+  const notice = useVersionNotification()
   const updates = useVersionUpdates({ t: I18N[lang], lang, setMsg: noop, setBusy: noop, active: updateOpen })
   useEffect(() => {
     const sync = event => setLang(event.detail === 'en' ? 'en' : 'zh')
@@ -71,12 +73,12 @@ export default function ChatVersionBadge({ version: suppliedVersion, children } 
   const title = `GenericAgent Admin ${displayVersion}`
   return <div className="oa-sidebar-admin">
     <button ref={trigger} type="button" aria-haspopup="dialog" className="oa-sidebar-admin-toggle" title={title} aria-label={title} aria-controls={contentID} aria-expanded={expanded} onClick={toggle}>
-      <span className="oa-sidebar-admin-label"><span>GenericAgent Admin</span><span className="oa-chat-version">{displayVersion}</span></span>
+      <span className="oa-sidebar-admin-label"><span>GenericAgent Admin</span><span className="oa-chat-version">{displayVersion}</span>{notice.release && <span className="oa-chat-version-dot" role="img" aria-label={lang === 'en' ? 'New version available' : '有新版本'} title={notice.release}/>}</span>
       <ChevronDown size={14} aria-hidden="true"/>
     </button>
     {expanded && createPortal(<div ref={panel} id={contentID} role="dialog" aria-label={title} className="oa-sidebar-admin-content" style={position}
       onClick={event => { if (event.target.closest('button:not(:disabled)')) setExpanded(false) }}>{children}
-      <button type="button" className="oa-sidebar-settings" onClick={() => { setUpdateOpen(true); updates.loadUpdateSnapshot() }}><Download size={15}/>{lang === 'en' ? 'Version updates' : '版本更新'}</button>
+      <button type="button" className="oa-sidebar-settings" onClick={() => { setUpdateOpen(true); updates.loadUpdateSnapshot(notice.check) }}><Download size={15}/>{lang === 'en' ? 'Version updates' : '版本更新'}</button>
     </div>, trigger.current.ownerDocument.body)}
     <SystemUpdateModal open={updateOpen} onClose={() => setUpdateOpen(false)} version={updates} lang={lang}/>
   </div>
