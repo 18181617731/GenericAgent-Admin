@@ -65,5 +65,55 @@ test('instance URLs are isolated and clear prevents late responses from restorin
 test('a failed request does not poison later refreshes', async () => {
   const reader = createChatSessionListReader()
   await assert.rejects(reader.load('/sessions', { fetcher: async () => { throw new Error('offline') } }), /offline/)
-  assert.deepEqual(await reader.load('/sessions', { fetcher: async () => response(snapshot) }), snapshot)
+})
+
+test('sync snapshots merge additions, removals, live state and metadata in stable order', async () => {
+  const reader = createChatSessionListReader()
+  const initial = { sessions: [{ id: 'b', updated_at: 2 }, { id: 'a', updated_at: 1 }], projects: ['old'], pinned_projects: [] }
+  await reader.load('/sessions?instance=one', { fetcher: async url => {
+    assert.equal(url, '/sessions?instance=one&sync=1')
+    return response({ ...initial, reset: true, revision: 'r1' })
+  } })
+  const merged = await reader.load('/sessions?instance=one', { fetcher: async (url, options) => {
+    assert.equal(url, '/sessions?instance=one&sync=1&since=r1')
+    assert.equal(options.headers['If-None-Match'], undefined)
+    return response({ reset: false, base_revision: 'r1', revision: 'r2', removed_session_ids: ['b'], session_upserts: [{ id: 'a', updated_at: 1, running: true, unread: true }, { id: 'c', updated_at: 1 }], projects: ['new'] })
+  } })
+  assert.deepEqual(merged, { ...initial, sessions: [{ id: 'a', updated_at: 1, running: true, unread: true }, { id: 'c', updated_at: 1 }], projects: ['new'] })
+  merged.sessions[0].running = false
+  const unchanged = await reader.load('/sessions?instance=one', { fetcher: async url => {
+    assert.match(url, /since=r2$/)
+    return new Response(null, { status: 204 })
+  } })
+  assert.equal(unchanged.sessions[0].running, true)
+})
+
+test('mismatched delta retries without cursor and expired cursor accepts a reset', async () => {
+  const reader = createChatSessionListReader()
+  await reader.load('/sessions', { fetcher: async () => response({ ...snapshot, reset: true, revision: 'r1' }) })
+  const urls = []
+  const data = await reader.load('/sessions', { fetcher: async url => {
+    urls.push(url)
+    return urls.length === 1
+      ? response({ reset: false, base_revision: 'wrong', revision: 'r2', session_upserts: [] })
+      : response({ sessions: [], projects: ['reset'], reset: true, revision: 'r3' })
+  } })
+  assert.deepEqual(urls, ['/sessions?sync=1&since=r1', '/sessions?sync=1'])
+  assert.deepEqual(data, { sessions: [], projects: ['reset'] })
+  assert.deepEqual(await reader.load('/sessions', { fetcher: async () => response({ ...snapshot, reset: true, revision: 'r4' }) }), snapshot)
+})
+
+test('eviction never sends a cursor whose snapshot is missing', async () => {
+  const reader = createChatSessionListReader({ maxEntries: 1 })
+  for (const url of ['/one', '/two', '/one']) {
+    await reader.load(url, { fetcher: async requested => {
+      assert.equal(requested, `${url}?sync=1`)
+      return response({ ...snapshot, reset: true, revision: url })
+    } })
+  }
+  const tiny = createChatSessionListReader({ maxBytes: 1 })
+  for (let i = 0; i < 2; i++) await tiny.load('/one', { fetcher: async url => {
+    assert.equal(url, '/one?sync=1')
+    return response({ ...snapshot, reset: true, revision: 'large' })
+  } })
 })

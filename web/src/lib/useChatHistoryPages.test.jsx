@@ -95,3 +95,59 @@ test('conflicts trigger refresh and errors permit retry', async () => {
   expect(h.result.current.error).toBe('')
   expect(h.messagesRef.current.map(m => m.id)).toEqual(['m1', 'm2'])
 })
+
+const compact = () => message('m2', { content: '<summary>done</summary>Answer', content_partial: true, execution_count: 1, render_key: 'pending-m2' })
+const fullMessage = () => message('m2', { content: 'LLM Running (Turn 1)\nProcess\n```[Info] Final response to user.```\nAnswer' })
+const lazyURL = '/api/chat/session/a?view=page&execution=lazy&instance_id=other'
+function applyCompact(h) { act(() => h.result.current.apply({ ...page(), messages: [compact()] }, lazyURL)) }
+
+test('lazy details deduplicate, retain instance and revision, preserve render identity and cache full bodies', async () => {
+  const gate = deferred()
+  const api = vi.fn(() => gate.promise)
+  const h = setup(api); applyCompact(h)
+  const m = h.messagesRef.current[0]
+  const first = h.result.current.loadMessage(m)
+  const second = h.result.current.loadMessage(m)
+  expect(second).toBe(first)
+  await act(async () => { await Promise.resolve() })
+  expect(api).toHaveBeenCalledOnce()
+  const url = new URL(api.mock.calls[0][0], 'http://localhost')
+  expect(url.searchParams.get('instance_id')).toBe('other')
+  expect(url.searchParams.get('view')).toBe('message')
+  expect(url.searchParams.get('revision')).toBe('m2')
+  expect(url.searchParams.has('execution')).toBe(false)
+  await act(async () => { gate.resolve(fullMessage()); await first })
+  expect(h.messagesRef.current[0].content_partial).toBeUndefined()
+  expect(h.messagesRef.current[0].render_key).toBe('pending-m2')
+  act(() => { h.result.current.begin(); h.result.current.apply(page('b'), 'instance:b'); h.result.current.begin(); h.result.current.apply({ ...page(), messages: [compact()] }, lazyURL) })
+  expect(h.messagesRef.current[0].content).toBe(fullMessage().content)
+  await h.result.current.loadMessage(h.messagesRef.current[0])
+  expect(api).toHaveBeenCalledOnce()
+})
+
+test('late lazy body cannot overwrite another session or a revised message', async () => {
+  for (const switchSession of [false, true]) {
+    const gate = deferred(); const api = vi.fn(() => gate.promise)
+    const h = setup(api); applyCompact(h)
+    const request = h.result.current.loadMessage(h.messagesRef.current[0])
+    const rejection = expect(request).rejects.toMatchObject({ name: 'AbortError' })
+    await act(async () => { await Promise.resolve() })
+    act(() => { if (switchSession) { h.result.current.begin(); h.result.current.apply(page('b'), 'instance:b') }
+      else h.result.current.apply({ ...page(), messages: [message('m2', { content_revision: 'changed', content: 'revised' })] }, lazyURL)
+    })
+    await act(async () => { gate.resolve(fullMessage()); await rejection })
+    expect(h.messagesRef.current[0].content).toBe(switchSession ? 'm2' : 'revised')
+    h.unmount()
+  }
+})
+
+test('lazy failure permits retry and mismatched body refreshes without corrupting content', async () => {
+  const api = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce({ ...fullMessage(), content_revision: 'changed' }).mockResolvedValueOnce(fullMessage())
+  const h = setup(api); applyCompact(h)
+  await act(async () => { await expect(h.result.current.loadMessage(h.messagesRef.current[0])).rejects.toThrow('offline') })
+  await act(async () => { await expect(h.result.current.loadMessage(h.messagesRef.current[0])).rejects.toThrow('message changed') })
+  expect(h.onConflict).toHaveBeenCalledOnce()
+  expect(h.messagesRef.current[0].content_partial).toBe(true)
+  await act(async () => { await h.result.current.loadMessage(h.messagesRef.current[0]) })
+  expect(h.messagesRef.current[0].content).toBe(fullMessage().content)
+})

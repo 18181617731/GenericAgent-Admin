@@ -2772,8 +2772,8 @@ const AssistantContent = memo(function AssistantContent({ content, structuredCon
       <button className="oa-turn-stack-head" data-running={pending ? 'true' : 'false'} type="button" onClick={() => setStackOpen(v => !v)} aria-expanded={stackOpen} title={stackOpen ? ct('折叠执行过程', 'Collapse execution') : ct('展开执行过程', 'Expand execution')}>
         <span className="oa-run-dot"/>
         <span className="oa-run-label">{ct('执行过程', 'Execution')}</span>
-        <b>{parsed.runs.length}</b>
-        <em className="oa-run-status">{pending ? ct('正在生成', 'Generating') : ct('已完成', 'Completed')}</em>
+        <b>{contentPartial ? executionCount : parsed.runs.length}</b>
+        <em className="oa-run-status">{executionLoading ? ct('加载中', 'Loading') : pending ? ct('正在生成', 'Generating') : ct('已完成', 'Completed')}</em>
         <ChevronDown className="oa-stack-chevron" size={15}/>
       </button>
       {stackOpen && boxedRuns.map((r, i) => {

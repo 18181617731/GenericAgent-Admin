@@ -219,6 +219,7 @@ export function ChatMessages({ layout = 'default', MessageList, activeSessionDet
           </button>}
           {historyPages.error && <div className="oa-session-load" role="alert">{historyPages.error}</div>}
           <MessageList
+            onLoadMessage={historyPages.loadMessage}
             messages={messages}
             isCurrentRunning={isCurrentRunning}
             onAskReply={fillAskReply}
