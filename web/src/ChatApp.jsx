@@ -39,7 +39,7 @@ import { loopSidebarView, updateSessionLoop } from './lib/chatLoopSidebar.js'
 import { normalizeLoopRecords } from './lib/chatLoopRecords.js'
 import { confirmDanger, showAppAlert } from './lib/danger'
 import { formatDuration, fuzzyMatch, goalBudgetPercent, goalTurnPercent } from './lib/format'
-import { JSON_TREE_CHILD_LIMIT, JSON_TREE_STRING_LIMIT, LIST_ITEM_LIMIT, LONG_TEXT_PREVIEW_CHARS, MARKDOWN_BLOCK_LIMIT, MARKDOWN_CHAR_LIMIT, MARKDOWN_LINE_LIMIT, assistantFinalResult, assistantTurnFallbackTitle, isToolResultText, parseAssistantContent, previewLongText, splitMarkdownParts, textRenderStats } from './lib/chatTextSafety'
+import { JSON_TREE_CHILD_LIMIT, JSON_TREE_STRING_LIMIT, LIST_ITEM_LIMIT, LONG_TEXT_PREVIEW_CHARS, MARKDOWN_BLOCK_LIMIT, MARKDOWN_CHAR_LIMIT, MARKDOWN_LINE_LIMIT, assistantFinalResult, assistantTurnFallbackTitle, cleanAssistantFinalBody, isToolResultText, parseAssistantContent, previewLongText, splitMarkdownParts, textRenderStats } from './lib/chatTextSafety'
 import { parseStructuredContent } from './lib/structuredContent'
 import { foldAgentProtocolBlocks, stripAgentProtocolBlocks } from './lib/agentProtocol'
 import { parseBlocks, parseInline } from './lib/markdown.js'
@@ -82,6 +82,7 @@ import { useSidebarPreferences } from './hooks/useSidebarPreferences.js'
 import ChatPrivacyCurtain from './components/ChatPrivacyCurtain.jsx'
 import { privateSessionTitle } from './lib/chatPrivacy.js'
 import { useChatPrivacyMode } from './hooks/useChatPrivacyMode.js'
+import { useAutoCollapseProcess } from './hooks/useAutoCollapseProcess.js'
 import { normalizeChatAttachments, chatAttachmentSource } from './lib/chatAttachments.js'
 import FileDownloadLink from './components/FileDownloadLink.jsx'
 
@@ -2725,21 +2726,62 @@ function UltraPlanMessageDrawer({ content = '', state, pending = false, onAskRep
   )
 }
 
-const AssistantContent = memo(function AssistantContent({ content, structuredContent, pending, onAskReply, onQuickReply, quickReplyDisabled = false, isLatestMessage = false, turnUsages, ultraplan_state, runStartedAtMS = 0, clockNow = 0, modelID = '' }) {
+const AssistantContent = memo(function AssistantContent({ content, structuredContent, pending, onAskReply, onQuickReply, quickReplyDisabled = false, isLatestMessage = false, turnUsages, ultraplan_state, runStartedAtMS = 0, clockNow = 0, modelID = '', contentPartial = false, executionCount = 0, onLoadExecution }) {
+  const [autoCollapseProcess] = useAutoCollapseProcess()
   const [openTurns, setOpenTurns] = useState({})
-  const [stackOpen, setStackOpen] = useState(pending)
+  const [stackOpen, setStackOpen] = useState(pending || !autoCollapseProcess)
   // 生成中自动展开过程；完成后自动折叠，只留最终回复。手动切换在 pending 不变时保留
-  useEffect(() => { setStackOpen(pending) }, [pending])
+  useEffect(() => { setStackOpen(pending || !autoCollapseProcess) }, [autoCollapseProcess, pending])
+  const [executionLoading, setExecutionLoading] = useState(false)
+  const [executionError, setExecutionError] = useState('')
+  const executionRequestRef = useRef(false)
+  const executionMountedRef = useRef(true)
+  useEffect(() => () => { executionMountedRef.current = false }, [])
+  const loadExecution = useCallback(async () => {
+    if (!contentPartial || !onLoadExecution || executionRequestRef.current) return
+    executionRequestRef.current = true
+    setExecutionLoading(true)
+    setExecutionError('')
+    try {
+      await onLoadExecution()
+    } catch (error) {
+      if (executionMountedRef.current && error?.name !== 'AbortError') setExecutionError(String(error?.message || error))
+    } finally {
+      executionRequestRef.current = false
+      if (executionMountedRef.current) setExecutionLoading(false)
+    }
+  }, [contentPartial, onLoadExecution])
+  const autoExecutionRequested = useRef(false)
+  useEffect(() => {
+    if (contentPartial && stackOpen && !autoExecutionRequested.current) {
+      autoExecutionRequested.current = true
+      void loadExecution()
+    }
+  }, [contentPartial, loadExecution, stackOpen])
+  const toggleExecution = () => {
+    setStackOpen(value => {
+      const next = !value
+      if (next && contentPartial) {
+        autoExecutionRequested.current = true
+        void loadExecution()
+      }
+      return next
+    })
+  }
   const liveUltraPlanState = useMemo(() => normalizeUltraPlanState(ultraplan_state), [ultraplan_state])
   const stats = useMemo(() => textRenderStats(content), [content])
   const parsed = useMemo(() => {
+    if (contentPartial) {
+      const final = parseAssistantContent(cleanAssistantFinalBody(content))
+      return { ...final, runs: [] }
+    }
     if (structuredContent) {
       const result = parseStructuredContent(structuredContent)
       if (result) return result
     }
     return parseAssistantContent(content)
-  }, [content, structuredContent])
-  const hasTurnSplit = parsed.runs.length > 0
+  }, [content, contentPartial, structuredContent])
+  const hasTurnSplit = parsed.runs.length > 0 || contentPartial
   const hasLiveUltraPlan = !!(liveUltraPlanState && (liveUltraPlanState.phases?.length > 0 || liveUltraPlanState.recentTasks?.length > 0 || liveUltraPlanState.objective))
   if (!content && pending && !hasLiveUltraPlan) {
     const startedAt = Number(runStartedAtMS) || 0
@@ -2767,15 +2809,18 @@ const AssistantContent = memo(function AssistantContent({ content, structuredCon
     : undefined
   const isTurnOpen = (r, i) => openTurns[`${r.turn}-${i}`] === true
   const toggleTurn = (r, i) => setOpenTurns(xs => ({ ...xs, [`${r.turn}-${i}`]: !isTurnOpen(r, i) }))
-  return <div className={`oa-content ${parsed.runs.length ? 'oa-agent-output' : ''}`}>
-    {parsed.runs.length > 0 && <div className={`oa-turn-stack ${stackOpen ? 'open' : 'collapsed'}`}>
-      <button className="oa-turn-stack-head" data-running={pending ? 'true' : 'false'} type="button" onClick={() => setStackOpen(v => !v)} aria-expanded={stackOpen} title={stackOpen ? ct('折叠执行过程', 'Collapse execution') : ct('展开执行过程', 'Expand execution')}>
+  return <div className={`oa-content ${hasTurnSplit ? 'oa-agent-output' : ''}`}>
+    {hasTurnSplit && <div className={`oa-turn-stack ${stackOpen ? 'open' : 'collapsed'}`}>
+      <button className="oa-turn-stack-head" data-running={pending ? 'true' : 'false'} type="button" onClick={toggleExecution} aria-expanded={stackOpen} title={stackOpen ? ct('折叠执行过程', 'Collapse execution') : ct('展开执行过程', 'Expand execution')}>
         <span className="oa-run-dot"/>
         <span className="oa-run-label">{ct('执行过程', 'Execution')}</span>
         <b>{contentPartial ? executionCount : parsed.runs.length}</b>
         <em className="oa-run-status">{executionLoading ? ct('加载中', 'Loading') : pending ? ct('正在生成', 'Generating') : ct('已完成', 'Completed')}</em>
         <ChevronDown className="oa-stack-chevron" size={15}/>
       </button>
+      {contentPartial && stackOpen && <div className="oa-history-status" role="status" aria-live="polite">
+        {executionError ? <><span>{executionError}</span><button type="button" disabled={executionLoading} onClick={() => void loadExecution()}>{ct('重试', 'Retry')}</button></> : ct('正在加载执行详情…', 'Loading execution details…')}
+      </div>}
       {stackOpen && boxedRuns.map((r, i) => {
         const open = isTurnOpen(r, i)
         const tu = turnUsages && turnUsages[i]
@@ -2800,8 +2845,8 @@ const AssistantContent = memo(function AssistantContent({ content, structuredCon
           : <p className="oa-turn-empty">{ct('正在等待该轮输出…', 'Waiting for this turn’s output…')}</p>}
       </section>}
     </div>}
-    {(parsed.summary || parsed.body || !parsed.runs.length) && <div className={parsed.runs.length ? 'oa-final-answer' : ''}>
-      {parsed.runs.length > 0 && <div className="oa-final-label">返回给用户</div>}
+    {(parsed.summary || parsed.body || !parsed.runs.length) && <div className={executionCount || parsed.runs.length ? 'oa-final-answer' : ''}>
+      {(executionCount > 0 || parsed.runs.length > 0) && <div className="oa-final-label">返回给用户</div>}
       {parsed.summary && <div className="oa-response-summary" aria-label="响应摘要"><span>摘要</span><b>{parsed.summary}</b></div>}
       {renderAssistantBody(parsed.body || (!parsed.summary ? content : '') || '', onAskReply, liveUltraPlanState || ultraplan_state, onQuickReply, quickReplyDisabled, isLatestMessage)}
     </div>}
@@ -3408,7 +3453,7 @@ export const ConductorEvents = memo(function ConductorEvents({ conductorDetail, 
   </aside>
 })
 
-export const ChatMessage = memo(function ChatMessage({ message: m, models = [], pending, onAskReply, onQuickReply, quickReplyDisabled = false, onEditResend, onRetry, editDisabled = false, clockNow = 0, version, onSwitchVersion, switchingNodeId = '', chatInstanceID = '', conductorWorker = false }) {
+export const ChatMessage = memo(function ChatMessage({ message: m, models = [], pending, onAskReply, onQuickReply, quickReplyDisabled = false, onEditResend, onRetry, editDisabled = false, clockNow = 0, version, onSwitchVersion, switchingNodeId = '', chatInstanceID = '', conductorWorker = false, onLoadMessage }) {
   const userText = m.role === 'user' ? stripUserAttachmentBlock(m.content) : m.content
   const workerInstruction = '\n\n[Server-owned Conductor worker instruction]\nComplete only this delegated objective. Return a concise, evidence-based result for the parent. Do not attempt to dispatch other workers.'
   const delegated = conductorWorker && m.role === 'user' && typeof userText === 'string' && userText.endsWith(workerInstruction)
@@ -3435,6 +3480,7 @@ export const ChatMessage = memo(function ChatMessage({ message: m, models = [], 
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(userText)
   const [editError, setEditError] = useState('')
+  const [copyError, setCopyError] = useState('')
   const [copied, setCopied] = useState(false)
   const [previewImageIndex, setPreviewImageIndex] = useState(-1)
   const previewImages = imageFiles.map((file, index) => ({
@@ -3453,17 +3499,22 @@ export const ChatMessage = memo(function ChatMessage({ message: m, models = [], 
       setEditError(error?.message || String(error))
     }
   }
-  const copyContent = () => {
-    navigator.clipboard?.writeText(m.role === 'user' ? userText : (m.content || '')).then?.(() => {
+  const copyContent = async () => {
+    setCopyError('')
+    try {
+      const full = m.content_partial && onLoadMessage ? await onLoadMessage(m) : m
+      await navigator.clipboard?.writeText(m.role === 'user' ? userText : (full.content || ''))
       setCopied(true)
       setTimeout(() => setCopied(false), 1500)
-    })
+    } catch (error) {
+      if (error?.name !== 'AbortError') setCopyError(String(error?.message || error))
+    }
   }
   return <article id={`msg-${m.id}`} data-msg-role={m.role} className={`oa-message ${m.role} ${m.error?'error':''}`}>
     <div className="oa-avatar">{m.role === 'user' ? '你' : 'GA'}</div>
     <div className="oa-bubble">
       <div className="oa-msg-body">
-      <div className="oa-meta"><b className="oa-meta-author">{m.role === 'user' ? 'You' : 'GenericAgent'}</b>{modelIdentity.label && <span className="oa-model-id" title={modelIdentity.title}>{modelIdentity.label}</span>}{m.created_at && <span className="oa-meta-time">{fmtTime(m.created_at)}</span>}{m.content && <button type="button" className="oa-mini-copy" onClick={copyContent} aria-label="复制消息">{copied ? <Check size={13}/> : <Copy size={13}/>}</button>}{m.role === 'user' && !pending && typeof onEditResend === 'function' && <button type="button" className="oa-mini-copy oa-edit-btn" onClick={() => { setDraft(userText); setEditError(''); setEditing(value => !value) }} disabled={editDisabled} aria-label="编辑并重新发送"><Edit3 size={13}/></button>}</div>
+      <div className="oa-meta"><b className="oa-meta-author">{m.role === 'user' ? 'You' : 'GenericAgent'}</b>{modelIdentity.label && <span className="oa-model-id" title={modelIdentity.title}>{modelIdentity.label}</span>}{m.created_at && <span className="oa-meta-time">{fmtTime(m.created_at)}</span>}{m.content && <button type="button" className="oa-mini-copy" onClick={copyContent} aria-label="复制消息">{copied ? <Check size={13}/> : <Copy size={13}/>}</button>}{copyError && <span className="oa-copy-error" role="alert">{copyError}</span>}{m.role === 'user' && !pending && typeof onEditResend === 'function' && <button type="button" className="oa-mini-copy oa-edit-btn" onClick={() => { setDraft(userText); setEditError(''); setEditing(value => !value) }} disabled={editDisabled} aria-label="编辑并重新发送"><Edit3 size={13}/></button>}</div>
       {imageFiles.length > 0 && <div className="oa-msg-images" aria-label="消息图片">{imageFiles.map((file, i) => {
         const name = uploadFileName(file)
         const src = addChatInstanceToURL(uploadFileSource(file), chatInstanceID)
@@ -3484,7 +3535,7 @@ export const ChatMessage = memo(function ChatMessage({ message: m, models = [], 
           return <span className={`oa-pending-file oa-file-kind-${visual.kind}`} key={`${name}-${i}`} title={`\u5f85\u4e0a\u4f20\uff1a${name}`}><Icon size={18}/><b>{name}</b></span>
         })}
       </div>}
-      {m.role === 'assistant' ? <>{m.commandResult ? <CommandResultCard result={m.commandResult} /> : showErrorCard ? <ChatErrorCard message={m} onRetry={onRetry}/> : <AssistantContent content={m.content} structuredContent={m.structured_content} pending={pending} onAskReply={onAskReply} onQuickReply={onQuickReply} quickReplyDisabled={quickReplyDisabled} isLatestMessage={pending} turnUsages={turnUsages} ultraplan_state={m.ultraplan_state} />}{!showErrorCard && <GeneratedImageGallery content={m.content}/>}</> : editing ? <div className="oa-message-editor"><textarea className="oa-edit-textarea" aria-label="编辑已发送消息" value={draft} autoFocus rows={Math.min(10, (draft.match(/\n/g) || []).length + 2)} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) submitEdit(); if (event.key === 'Escape') resetDraft() }}/>{editError && <div role="alert" className="oa-message-editor-error">{editError}</div>}<div className="oa-edit-actions"><button type="button" className="oa-edit-submit" onClick={submitEdit} disabled={!draft.trim() || editDisabled}><Send size={13}/>发送</button><button type="button" className="oa-edit-cancel" onClick={resetDraft}>取消</button></div></div> : (userText && <div className="oa-msg-text"><MarkdownBlock text={userText} /></div>)}
+      {m.role === 'assistant' ? <>{m.commandResult ? <CommandResultCard result={m.commandResult} /> : showErrorCard ? <ChatErrorCard message={m} onRetry={onRetry}/> : <AssistantContent content={m.content} structuredContent={m.structured_content} pending={pending} onAskReply={onAskReply} onQuickReply={onQuickReply} quickReplyDisabled={quickReplyDisabled} isLatestMessage={pending} turnUsages={turnUsages} ultraplan_state={m.ultraplan_state} contentPartial={m.content_partial} executionCount={m.execution_count} onLoadExecution={onLoadMessage ? () => onLoadMessage(m) : undefined} />}{!showErrorCard && <GeneratedImageGallery content={m.content}/>}</> : editing ? <div className="oa-message-editor"><textarea className="oa-edit-textarea" aria-label="编辑已发送消息" value={draft} autoFocus rows={Math.min(10, (draft.match(/\n/g) || []).length + 2)} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) submitEdit(); if (event.key === 'Escape') resetDraft() }}/>{editError && <div role="alert" className="oa-message-editor-error">{editError}</div>}<div className="oa-edit-actions"><button type="button" className="oa-edit-submit" onClick={submitEdit} disabled={!draft.trim() || editDisabled}><Send size={13}/>发送</button><button type="button" className="oa-edit-cancel" onClick={resetDraft}>取消</button></div></div> : (userText && <div className="oa-msg-text"><MarkdownBlock text={userText} /></div>)}
       {showUsageRow && <UsageRow u={usageTotal} label={usageLabel} className="oa-usage-total" elapsedMs={elapsedMs} live={pending} />}
       {version && <div className="oa-msg-version" aria-label={`消息版本 ${version.index}/${version.total}`}><button type="button" onClick={() => onSwitchVersion?.(version.previous_node_id)} disabled={!version.previous_node_id || !!switchingNodeId} aria-label="上一个消息版本"><ChevronLeft size={14}/></button><span>{version.index} / {version.total}</span><button type="button" onClick={() => onSwitchVersion?.(version.next_node_id)} disabled={!version.next_node_id || !!switchingNodeId} aria-label="下一个消息版本"><ChevronRight size={14}/></button></div>}
       </div>
@@ -3533,7 +3584,7 @@ const VirtualMessageSlot = memo(function VirtualMessageSlot({ active, cacheKey, 
   return <div ref={slotRef} className={`oa-message-slot ${active ? 'is-active' : 'is-placeholder'}`} data-message-id={messageID} data-message-key={messageKey} style={active ? undefined : { height }} aria-hidden={active ? undefined : 'true'}>{active ? children : null}</div>
 })
 
-function MessageListContent({ messages, models = [], isCurrentRunning, onAskReply, onQuickReply, onEditResend, onRetry, clockNow, worldline, onSwitchVersion, conductorDetail, sessionKey, chatInstanceID = '' }) {
+function MessageListContent({ messages, models = [], isCurrentRunning, onAskReply, onQuickReply, onEditResend, onRetry, onLoadMessage, clockNow, worldline, onSwitchVersion, conductorDetail, sessionKey, chatInstanceID = '' }) {
   const rootRef = useRef(null)
   const threadMessages = useMemo(() => messages.filter(message => message.kind !== 'btw'), [messages])
   const lastMessageId = threadMessages.at(-1)?.id
@@ -3618,7 +3669,7 @@ function MessageListContent({ messages, models = [], isCurrentRunning, onAskRepl
       const cacheKey = `${sessionKey}:${key}`
       return <VirtualMessageSlot key={key} active={activeKeys.has(key)} cacheKey={cacheKey} estimatedHeight={estimatedMessageHeight(m, showTimeline, showVersions)} messageID={m.id} messageKey={key}>
         {showTimeline && <div className="oa-timeline"><span>{dateKey}</span></div>}
-        <ChatMessage message={m} models={models} conductorWorker={conductorDetail?.conductor?.role === 'worker'} pending={pending} onAskReply={onAskReply} onQuickReply={onQuickReply} onEditResend={onEditResend} onRetry={retrySource ? () => onRetry?.(retrySource) : undefined} editDisabled={isCurrentRunning} clockNow={clockNow} version={versionInfo} onSwitchVersion={onSwitchVersion} switchingNodeId={worldline?.switchingNodeId} chatInstanceID={chatInstanceID} />
+        <ChatMessage message={m} models={models} conductorWorker={conductorDetail?.conductor?.role === 'worker'} pending={pending} onAskReply={onAskReply} onQuickReply={onQuickReply} onEditResend={onEditResend} onRetry={retrySource ? () => onRetry?.(retrySource) : undefined} onLoadMessage={onLoadMessage} editDisabled={isCurrentRunning} clockNow={clockNow} version={versionInfo} onSwitchVersion={onSwitchVersion} switchingNodeId={worldline?.switchingNodeId} chatInstanceID={chatInstanceID} />
         {showVersions && <div className="oa-msg-versions">
           <button type="button" disabled={isCurrentRunning || !versionInfo.previous_node_id} onClick={() => onSwitchVersion(versionInfo.previous_node_id)} title="上一个版本" aria-label="上一个版本"><ChevronLeft size={13}/></button>
           <em>{versionInfo.index}/{versionInfo.total}</em>
@@ -3629,8 +3680,8 @@ function MessageListContent({ messages, models = [], isCurrentRunning, onAskRepl
   </div>
 }
 
-export const MessageList = memo(function MessageList({ messages, models, isCurrentRunning, onAskReply, onQuickReply, onEditResend, onRetry, clockNow, worldline, onSwitchVersion, chatInstanceID = '', conductorDetail = null }) {
-  return <MessageListContent key={chatInstanceID} messages={messages} models={models} isCurrentRunning={isCurrentRunning} onAskReply={onAskReply} onQuickReply={onQuickReply} onEditResend={onEditResend} onRetry={onRetry} clockNow={clockNow} worldline={worldline} onSwitchVersion={onSwitchVersion} conductorDetail={conductorDetail} sessionKey={chatInstanceID} chatInstanceID={chatInstanceID}/>
+export const MessageList = memo(function MessageList({ messages, models, isCurrentRunning, onAskReply, onQuickReply, onEditResend, onRetry, onLoadMessage, clockNow, worldline, onSwitchVersion, chatInstanceID = '', conductorDetail = null }) {
+  return <MessageListContent key={chatInstanceID} messages={messages} models={models} isCurrentRunning={isCurrentRunning} onAskReply={onAskReply} onQuickReply={onQuickReply} onEditResend={onEditResend} onRetry={onRetry} onLoadMessage={onLoadMessage} clockNow={clockNow} worldline={worldline} onSwitchVersion={onSwitchVersion} conductorDetail={conductorDetail} sessionKey={chatInstanceID} chatInstanceID={chatInstanceID}/>
 })
 
 export function ComposerActions({ onAttach, onCommands, onSystemPrompt, onKeychain, onAutorun, onLoop, onConductor, conductorActive, conductorDisabled, commandsOpen, keychainOpen, systemPromptActive, systemPromptLabel, autorunEnabled, loopOpen, triggerRef }) {
@@ -5217,6 +5268,24 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
     setLlms,
     setLlmNo,
   })
+
+  const loadChatMessage = useCallback(async message => {
+    const sessionID = activeSidRef.current
+    if (!message?.content_partial || !sessionID) return message
+    const query = new URLSearchParams({
+      view: 'message',
+      message_id: String(message.id || ''),
+      revision: String(message.content_revision || ''),
+    })
+    const full = await chatApi(`/api/chat/session/${encodeURIComponent(sessionID)}?${query.toString()}`)
+    if (activeSidRef.current !== sessionID || full?.id !== message.id || full?.content_partial) {
+      throw new DOMException('Stale message response', 'AbortError')
+    }
+    setMessages(current => current.map(item => item.id === message.id
+      ? { ...full, ...(item.render_key ? { render_key: item.render_key } : {}) }
+      : item))
+    return full
+  }, [chatApi])
 
   const loadSessions = async (prefer = sid, options = {}) => {
     const { open = false, isCurrent = () => true } = options
@@ -7362,7 +7431,7 @@ export default function ChatApp({ uiScale = 1, onUiScaleChange = () => {} }) {
           <h1>今天想让 GenericAgent 做什么？</h1>
           <p>支持 Markdown、代码块复制、图片输入、模型切换、会话重命名与删除。</p>
         </div>}
-        {privacyMode ? <ChatPrivacyCurtain lang={chatLanguage()} status={privacyStatus} metrics={privacyMetrics} renderResult={privacyResult ? () => renderAssistantBody(privacyResult) : undefined}/> : <MessageList messages={messages} models={llms} isCurrentRunning={isCurrentRunning} onAskReply={fillAskReply} onQuickReply={send} onEditResend={editAndResend} onRetry={retryFailedTurn} clockNow={streamClock} worldline={worldlineForView} onSwitchVersion={switchWorldline} chatInstanceID={chatInstanceID} conductorDetail={conductorView} />}
+        {privacyMode ? <ChatPrivacyCurtain lang={chatLanguage()} status={privacyStatus} metrics={privacyMetrics} renderResult={privacyResult ? () => renderAssistantBody(privacyResult) : undefined}/> : <MessageList messages={messages} models={llms} isCurrentRunning={isCurrentRunning} onAskReply={fillAskReply} onQuickReply={send} onEditResend={editAndResend} onRetry={retryFailedTurn} onLoadMessage={loadChatMessage} clockNow={streamClock} worldline={worldlineForView} onSwitchVersion={switchWorldline} chatInstanceID={chatInstanceID} conductorDetail={conductorView} />}
         {!privacyMode && <SubagentStatusPanel states={subagents}/>}
         {showFollow && <div className="oa-follow-row">
           <button className={`oa-follow-btn ${isCurrentRunning ? 'is-live' : ''}`} type="button" onClick={resumeFollow} title={ct('继续跟随最新消息', 'Follow the latest message')} aria-label={ct('继续跟随最新消息', 'Follow the latest message')}><ChevronDown size={16}/><span className="sr-only">继续跟随</span></button>

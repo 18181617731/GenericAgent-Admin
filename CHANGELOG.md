@@ -2,6 +2,13 @@
 
 This file records manually curated release changes for GenericAgent Admin Go.
 
+## v1.0.137 - 2026-10-14
+
+### Weak-network chat history synchronization
+- Merge the upstream compact session-list protocol, bounded revision snapshots, and lazy execution-history page transport from GenericAgent-Admin.
+- Keep the local chat rendering, instance scope, Loop, project, and privacy contracts while adapting partial assistant messages to load execution details only when needed.
+- Preserve legacy session-list responses and add query-aware smoke fixtures for incremental synchronization requests.
+
 ## v1.0.136 - 2026-10-12
 
 ### Deterministic chat lifecycle verification

@@ -2803,7 +2803,7 @@ describe('mobile chat session navigation', () => {
       const path = String(url)
       if (path === '/api/config') return jsonResponse({ slash_commands:[] })
       if (path === '/api/slash-commands') return jsonResponse({ commands:[] })
-      if (path === '/api/chat/sessions') return jsonResponse({ sessions })
+      if (path.includes('/api/chat/sessions')) return jsonResponse({ sessions })
       if (path === '/api/chat/session/result-session') return jsonResponse({ ...sessions[0], messages:[{ id:'u-result', role:'user', content:'SECRET_QUESTION' }, { id:'a-result', role:'assistant', content:assistant }], raw_history:[], history_info:[], settings:{ llm_no:0, tools_mode:'official' } })
       if (path === '/api/chat/state/result-session') return jsonResponse({ llms:[], settings:{ llm_no:0, tools_mode:'official' }, loop:{ enabled:false } })
       throw new Error(`unexpected url ${url}`)
@@ -2836,7 +2836,7 @@ describe('mobile chat session navigation', () => {
       const path = String(url)
       if (path === '/api/config') return jsonResponse({ slash_commands:[{ cmd:'/secret', desc:'SECRET_COMMAND_DESCRIPTION', content:'SECRET_COMMAND_CONTENT' }] })
       if (path === '/api/slash-commands') return jsonResponse({ commands:[] })
-      if (path === '/api/chat/sessions') return jsonResponse({ sessions })
+      if (path.split('?')[0] === '/api/chat/sessions') return jsonResponse({ sessions })
       if (path === '/api/chat/session/private-session') return jsonResponse({ ...sessions[0], messages, raw_history:[{ content:'SECRET_CONTEXT' }], history_info:[], settings:{ llm_no:0, tools_mode:'official' } })
       if (path === '/api/chat/state/private-session') return jsonResponse({ llms:[], settings:{ llm_no:0, tools_mode:'official' }, loop:{ enabled:true, status:'running', round:2, max_rounds:5 }, backend:{ diagnosis:{ code:'python_error', detail:'SECRET_DIAGNOSIS D:/private/python.exe' } } })
       throw new Error(`unexpected url ${url}`)
@@ -2880,7 +2880,7 @@ describe('mobile chat session navigation', () => {
       const path = String(url)
       if (path === '/api/config') return jsonResponse({ slash_commands:[] })
       if (path === '/api/slash-commands') return jsonResponse({ commands:[] })
-      if (path === '/api/chat/sessions') return jsonResponse({ sessions:[] })
+      if (path.split('?')[0] === '/api/chat/sessions') return jsonResponse({ sessions:[] })
       throw new Error(`unexpected url ${url}`)
     })
 
@@ -2912,7 +2912,7 @@ describe('mobile chat session navigation', () => {
       const path = String(url)
       if (path === '/api/config') return jsonResponse({ slash_commands:[] })
       if (path === '/api/slash-commands') return jsonResponse({ commands:[] })
-      if (path === '/api/chat/sessions') return jsonResponse({ sessions:[] })
+      if (path.split('?')[0] === '/api/chat/sessions') return jsonResponse({ sessions:[] })
       throw new Error(`unexpected url ${url}`)
     })
 
@@ -2943,7 +2943,7 @@ describe('mobile chat session navigation', () => {
       const path = String(url)
       if (path === '/api/config') return jsonResponse({ slash_commands:[] })
       if (path === '/api/slash-commands') return jsonResponse({ commands:[] })
-      if (path === '/api/chat/sessions') return jsonResponse({ sessions })
+      if (path.split('?')[0] === '/api/chat/sessions') return jsonResponse({ sessions })
       if (path.startsWith('/api/chat/session/')) {
         const id = path.split('/').pop()
         const row = sessions.find(item => item.id === id)
@@ -2987,7 +2987,7 @@ describe('chat project management', () => {
       if (path === '/api/slash-commands') return jsonResponse({ commands:[] })
       if (path === '/api/extra-system-prompt-presets') return jsonResponse({ presets:[] })
       if (path === '/api/instances') return jsonResponse({ instances:[] })
-      if (path === '/api/chat/sessions') return jsonResponse({ sessions: sessions.map(session => ({ ...session, project_mode:currentProject })), projects:[currentProject], pinned_projects:[currentProject] })
+      if (path.split('?')[0] === '/api/chat/sessions') return jsonResponse({ sessions: sessions.map(session => ({ ...session, project_mode:currentProject })), projects:[currentProject], pinned_projects:[currentProject] })
       if (path === '/api/chat/session/project-session') return jsonResponse({ ...sessions[0], project_mode:currentProject, messages:[], raw_history:[], history_info:[], settings:{ llm_no:0, tools_mode:'official' } })
       if (path === '/api/chat/state/project-session') return jsonResponse({ llms:[], settings:{ llm_no:0, tools_mode:'official' }, loop:{ enabled:false } })
       if (path === '/api/chat/projects/rename' && options.method === 'PATCH') {
@@ -3025,7 +3025,7 @@ describe('chat project management', () => {
       if (path === '/api/slash-commands') return jsonResponse({ commands:[] })
       if (path === '/api/extra-system-prompt-presets') return jsonResponse({ presets:[] })
       if (path === '/api/instances') return jsonResponse({ instances:[] })
-      if (path === '/api/chat/sessions') return jsonResponse({ sessions:[session], projects:['Alpha','Beta'], pinned_projects:[] })
+      if (path.split('?')[0] === '/api/chat/sessions') return jsonResponse({ sessions:[session], projects:['Alpha','Beta'], pinned_projects:[] })
       if (path === '/api/chat/session/project-session') return jsonResponse({ ...session, messages:[], raw_history:[], history_info:[], settings:{ llm_no:0, tools_mode:'official' } })
       if (path === '/api/chat/state/project-session') return jsonResponse({ llms:[], settings:{ llm_no:0, tools_mode:'official' }, loop:{ enabled:false } })
       if (path === '/api/chat/worldline/project-session') return jsonResponse({ schema_version:1, nodes:[], current_path:[] })
@@ -3067,7 +3067,7 @@ describe('chat project management', () => {
       if (path === '/api/slash-commands') return jsonResponse({ commands:[] })
       if (path === '/api/extra-system-prompt-presets') return jsonResponse({ presets:[] })
       if (path === '/api/instances') return jsonResponse({ instances:[] })
-      if (path === '/api/chat/sessions') return jsonResponse({ sessions:[session], projects:['Alpha'], pinned_projects:[] })
+      if (path.split('?')[0] === '/api/chat/sessions') return jsonResponse({ sessions:[session], projects:['Alpha'], pinned_projects:[] })
       if (path === '/api/chat/session/project-session') return jsonResponse({ ...session, messages:[], raw_history:[], history_info:[], settings:{ llm_no:0, tools_mode:'official' } })
       if (path === '/api/chat/state/project-session') return jsonResponse({ llms:[], settings:{ llm_no:0, tools_mode:'official' }, loop:{ enabled:false } })
       if (path === '/api/chat/worldline/project-session') return jsonResponse({ schema_version:1, nodes:[], current_path:[] })
@@ -3108,7 +3108,7 @@ describe('chat project management', () => {
       if (path === '/api/slash-commands') return jsonResponse({ commands:[] })
       if (path === '/api/extra-system-prompt-presets') return jsonResponse({ presets:[] })
       if (path === '/api/instances') return jsonResponse({ instances:[] })
-      if (path === '/api/chat/sessions') return jsonResponse({ sessions:[{ ...session, project_mode:deleted ? '' : 'Alpha', workspace:deleted ? '' : session.workspace }], projects:deleted ? [] : ['Alpha'], pinned_projects:[] })
+      if (path.split('?')[0] === '/api/chat/sessions') return jsonResponse({ sessions:[{ ...session, project_mode:deleted ? '' : 'Alpha', workspace:deleted ? '' : session.workspace }], projects:deleted ? [] : ['Alpha'], pinned_projects:[] })
       if (path === '/api/chat/session/project-session') return jsonResponse({ ...session, messages:[{ id:'message-1', role:'assistant', content:'历史仍在' }], raw_history:[], history_info:[], settings:{ llm_no:0, tools_mode:'official' } })
       if (path === '/api/chat/state/project-session') return jsonResponse({ llms:[], settings:{ llm_no:0, tools_mode:'official' }, loop:{ enabled:false } })
       if (path === '/api/chat/projects/delete' && options.method === 'DELETE') {
@@ -3172,7 +3172,7 @@ describe('chat worldline controls', () => {
       const path = String(url)
       if (path === '/api/config') return jsonResponse({ slash_commands: [] })
       if (path === '/api/slash-commands') return jsonResponse({ commands: [] })
-      if (path === '/api/chat/sessions') return jsonResponse({ sessions })
+      if (path.split('?')[0] === '/api/chat/sessions') return jsonResponse({ sessions })
       if (path === '/api/chat/session/worldline-session') return jsonResponse({ ...sessions[0], messages: [], raw_history: [], history_info: [], settings: { llm_no: 0, tools_mode: 'official' } })
       if (path === '/api/chat/state/worldline-session') return jsonResponse({ llms: [], settings: { llm_no: 0, tools_mode: 'official' } })
       if (path === '/api/chat/worldline/worldline-session?activate=true') return jsonResponse(worldline)
@@ -3202,7 +3202,7 @@ describe('chat loop controls', () => {
       if (path === '/api/slash-commands') return jsonResponse({ commands:[] })
       if (path === '/api/extra-system-prompt-presets') return jsonResponse({ presets:[] })
       if (path === '/api/instances') return jsonResponse({ items:[] })
-      if (path === '/api/chat/sessions') {
+      if (path.split('?')[0] === '/api/chat/sessions') {
         sessionRequests += 1
         return sessionRequests === 1 ? staleSessions : jsonResponse({ sessions:[freshSession] })
       }
@@ -3243,7 +3243,7 @@ describe('chat loop controls', () => {
       if (path === '/api/config') return jsonResponse({ slash_commands:[] })
       if (path === '/api/slash-commands') return jsonResponse({ commands:[] })
       if (path === '/api/instances') return jsonResponse({ items:[] })
-      if (path === '/api/chat/sessions') return jsonResponse({ sessions })
+      if (path.split('?')[0] === '/api/chat/sessions') return jsonResponse({ sessions })
       if (path === '/api/chat/session/private-loop') return jsonResponse({ ...sessions[0], messages:[], raw_history:[], history_info:[], settings:{ llm_no:0, tools_mode:'official' } })
       if (path === '/api/chat/state/private-loop') return jsonResponse({ llms:[], settings:{ llm_no:0, tools_mode:'official' }, loop:{ enabled:false, status:'waiting', round:0, max_rounds:0 } })
       if (path === '/api/chat/loop/private-loop/start') {
@@ -3284,7 +3284,7 @@ describe('chat loop controls', () => {
       if (path === '/api/slash-commands') return jsonResponse({ commands:[] })
       if (path === '/api/extra-system-prompt-presets') return jsonResponse({ presets:[] })
       if (path === '/api/instances') return jsonResponse({ items:[] })
-      if (path === '/api/chat/sessions') return jsonResponse({ sessions })
+      if (path.split('?')[0] === '/api/chat/sessions') return jsonResponse({ sessions })
       if (path === '/api/chat/session/loop-session') return jsonResponse({ ...sessions[0], messages:[], raw_history:[], history_info:[], settings:{ llm_no:0, tools_mode:'official' } })
       if (path === '/api/chat/state/loop-session') return jsonResponse({ llms:[model], settings:{ llm_no:0, tools_mode:'official' }, loop:startedBody ? { enabled:true, status:'waiting', epoch:1, round:0, max_rounds:3, controller_prompt:startedBody.objective, controller_llm_no:startedBody.controller_llm_no } : stoppedLoop })
       if (path === '/api/chat/loop/loop-session/start') {
